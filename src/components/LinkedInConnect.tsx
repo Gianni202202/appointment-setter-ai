@@ -28,6 +28,8 @@ export default function LinkedInConnect() {
     message: string;
   } | null>(null);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const pollCountRef = useRef(0);
+  const MAX_POLLS = 12; // Max 60 seconds of polling
 
   useEffect(() => {
     checkStatus();
@@ -71,9 +73,17 @@ export default function LinkedInConnect() {
           // Open auth popup
           const popup = window.open(data.url, '_blank', 'width=600,height=700');
 
-          // Start polling for connection status every 5 seconds
+          // Start polling for connection status every 5 seconds (max 60s)
+          pollCountRef.current = 0;
           // The user will complete auth in the popup, and we'll detect it
           pollRef.current = setInterval(() => {
+            pollCountRef.current++;
+            if (pollCountRef.current >= MAX_POLLS) {
+              if (pollRef.current) clearInterval(pollRef.current);
+              pollRef.current = null;
+              setConnecting(false);
+              return;
+            }
             checkStatus();
           }, 5000);
 
