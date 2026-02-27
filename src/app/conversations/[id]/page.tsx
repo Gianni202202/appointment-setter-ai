@@ -76,10 +76,10 @@ export default function ConversationDetail() {
 
     try {
       // Use the test endpoint to generate without sending
-      const res = await fetch('/api/agent/test', {
+      const res = await fetch('/api/agent/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversation_id: chatId }),
+        body: JSON.stringify({ chat_id: chatId }),
       });
 
       if (!res.ok) {
@@ -89,10 +89,10 @@ export default function ConversationDetail() {
 
       const data = await res.json();
       const draft: AiDraft = {
-        message: data.preview?.message || '',
-        reasoning: data.preview?.reasoning || '',
-        sentiment: data.preview?.sentiment || 'neutral',
-        needs_human: data.preview?.needs_human || false,
+        message: data.draft?.message || '',
+        reasoning: data.draft?.reasoning || '',
+        sentiment: data.draft?.sentiment || 'neutral',
+        needs_human: data.draft?.needs_human || false,
       };
       setAiDraft(draft);
       setEditableDraft(draft.message);
