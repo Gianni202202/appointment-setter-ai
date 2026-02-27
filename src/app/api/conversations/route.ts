@@ -4,76 +4,57 @@ const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
 const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
 
-// Helper: extract the best name from a chat object
-function extractName(chat: any): string {
-  // Try attendees first (find the other person, not yourself)
+const uniHeaders = { 'X-API-KEY': API_KEY, 'Accept': 'application/json' };
+
+// Fetch attendees for a chat using the dedicated endpoint
+async function fetchAttendees(chatId: string): Promise<{ name: string; headline: string; company: string; profile_url: string }> {
+  try {
+    const res = await fetch(`https://${DSN}/api/v1/chats/${chatId}/attendees`, {
+      headers: uniHeaders,
+      cache: 'no-store',
+    });
+    if (!res.ok) return { name: '', headline: '', company: '', profile_url: '' };
+    const data = await res.json();
+    const attendees = data.items || data || [];
+    
+    // Find the non-me attendee
+    for (const a of attendees) {
+      if (a.is_me) continue;
+      return {
+        name: a.display_name || a.name || a.identifier || '',
+        headline: a.headline || a.tagline || '',
+        company: a.company || a.organization || '',
+        profile_url: a.profile_url || '',
+      };
+    }
+    // Fallback to first attendee
+    if (attendees.length > 0) {
+      const a = attendees[0];
+      return {
+        name: a.display_name || a.name || a.identifier || '',
+        headline: a.headline || a.tagline || '',
+        company: a.company || a.organization || '',
+        profile_url: a.profile_url || '',
+      };
+    }
+    return { name: '', headline: '', company: '', profile_url: '' };
+  } catch {
+    return { name: '', headline: '', company: '', profile_url: '' };
+  }
+}
+
+// Extract name from chat object (fast path, no extra API call)
+function extractNameFromChat(chat: any): string {
   if (chat.attendees && Array.isArray(chat.attendees)) {
     for (const a of chat.attendees) {
       if (a.is_me) continue;
       const name = a.display_name || a.name || a.identifier || '';
       if (name && name !== 'Unknown') return name;
     }
-    const first = chat.attendees[0];
-    if (first) {
-      const name = first.display_name || first.name || first.identifier || '';
-      if (name && name !== 'Unknown') return name;
-    }
   }
-  // Try chat name — but skip if it looks like InMail subject
   if (chat.name && chat.name !== 'Unknown') return chat.name;
   if (chat.title && chat.title !== 'Unknown') return chat.title;
-  if (chat.last_message?.sender_name) return chat.last_message.sender_name;
   return '';
-}
-
-// Fetch attendee details for a single chat
-async function enrichChat(chatId: string): Promise<{ name: string; headline: string; company: string }> {
-  try {
-    const res = await fetch(`https://${DSN}/api/v1/chats/${chatId}`, {
-      headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-      cache: 'no-store',
-    });
-    if (!res.ok) return { name: '', headline: '', company: '' };
-    const data = await res.json();
-    let name = extractName(data) || '';
-    let headline = '';
-    let company = '';
-    if (data.attendees && Array.isArray(data.attendees)) {
-      for (const a of data.attendees) {
-        if (a.is_me) continue;
-        if (!name) name = a.display_name || a.name || a.identifier || '';
-        headline = a.headline || '';
-        company = a.company || '';
-        break;
-      }
-    }
-    return { name, headline, company };
-  } catch {
-    return { name: '', headline: '', company: '' };
-  }
-}
-
-// Fetch messages for a chat to get sender name
-async function getFirstMessage(chatId: string): Promise<string> {
-  try {
-    const res = await fetch(`https://${DSN}/api/v1/chats/${chatId}/messages?limit=1`, {
-      headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-      cache: 'no-store',
-    });
-    if (!res.ok) return '';
-    const data = await res.json();
-    const items = data.items || data || [];
-    if (items.length > 0) {
-      const msg = items[0];
-      // Get sender name from the message if it's from the other person
-      if (!msg.is_sender && !msg.sender?.is_me) {
-        return msg.sender?.display_name || msg.sender?.name || '';
-      }
-    }
-    return '';
-  } catch {
-    return '';
-  }
 }
 
 export async function GET(request: Request) {
@@ -85,45 +66,35 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const chatId = searchParams.get('chat_id');
 
-    // Single chat with messages
+    // =============================================
+    // SINGLE CHAT — with messages and full details
+    // =============================================
     if (chatId) {
-      // Verify ownership
       const chatRes = await fetch(`https://${DSN}/api/v1/chats/${chatId}`, {
-        headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-        cache: 'no-store',
+        headers: uniHeaders, cache: 'no-store',
       });
 
-      if (chatRes.ok) {
-        const chatData = await chatRes.json();
-        if (chatData.account_id && chatData.account_id !== ACCOUNT_ID) {
-          return NextResponse.json({ error: 'Access denied' }, { status: 403 });
-        }
+      if (!chatRes.ok) {
+        return NextResponse.json({ error: 'Chat not found' }, { status: 404 });
+      }
 
-        // Extract names from attendees
-        let prospect_name = extractName(chatData) || 'LinkedIn Contact';
-        let prospect_headline = '';
-        let prospect_company = '';
+      const chatData = await chatRes.json();
+      if (chatData.account_id && chatData.account_id !== ACCOUNT_ID) {
+        return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+      }
 
-        if (chatData.attendees && Array.isArray(chatData.attendees)) {
-          for (const a of chatData.attendees) {
-            if (a.is_me) continue;
-            prospect_headline = a.headline || '';
-            prospect_company = a.company || '';
-            break;
-          }
-        }
+      // Get attendees via dedicated endpoint
+      const attendeeInfo = await fetchAttendees(chatId);
 
-        const msgsRes = await fetch(`https://${DSN}/api/v1/chats/${chatId}/messages?limit=50`, {
-          headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-          cache: 'no-store',
-        });
+      // Get messages
+      const msgsRes = await fetch(`https://${DSN}/api/v1/chats/${chatId}/messages?limit=50`, {
+        headers: uniHeaders, cache: 'no-store',
+      });
 
-        if (!msgsRes.ok) {
-          return NextResponse.json({ error: 'Failed to fetch messages' }, { status: 500 });
-        }
-
+      let messages: any[] = [];
+      if (msgsRes.ok) {
         const msgsData = await msgsRes.json();
-        const messages = (msgsData.items || msgsData || []).map((msg: any) => ({
+        messages = (msgsData.items || msgsData || []).map((msg: any) => ({
           id: msg.id,
           role: (msg.is_sender || msg.sender?.is_me) ? 'agent' : 'prospect',
           content: msg.text || msg.body || '',
@@ -132,41 +103,43 @@ export async function GET(request: Request) {
           is_read: true,
         }));
 
-        // Try to get the prospect name from messages if still missing
-        if (prospect_name === 'LinkedIn Contact') {
-          for (const msg of messages) {
-            if (msg.role === 'prospect' && msg.sender_name) {
-              prospect_name = msg.sender_name;
-              break;
-            }
-          }
-        }
-
         messages.sort((a: any, b: any) =>
           new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime()
         );
-
-        return NextResponse.json({
-          messages,
-          prospect_name,
-          prospect_headline,
-          prospect_company,
-          chat_id: chatId,
-        });
       }
 
-      return NextResponse.json({ error: 'Chat not found' }, { status: 404 });
+      // Pick best name
+      let prospect_name = attendeeInfo.name || extractNameFromChat(chatData);
+      if (!prospect_name) {
+        // Last resort: get name from messages
+        for (const msg of messages) {
+          if (msg.role === 'prospect' && msg.sender_name) {
+            prospect_name = msg.sender_name;
+            break;
+          }
+        }
+      }
+
+      return NextResponse.json({
+        messages,
+        prospect_name: prospect_name || 'LinkedIn Contact',
+        prospect_headline: attendeeInfo.headline,
+        prospect_company: attendeeInfo.company,
+        prospect_profile_url: attendeeInfo.profile_url,
+        chat_id: chatId,
+      });
     }
 
-    // Fetch all chats — ONLY our account
+    // =============================================
+    // CHAT LIST — with enriched names
+    // =============================================
     let allChats: any[] = [];
     let nextCursor: string | null = null;
     const maxChats = 200;
 
     const firstUrl = `https://${DSN}/api/v1/chats?limit=100&account_id=${ACCOUNT_ID}`;
     const firstRes = await fetch(firstUrl, {
-      headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-      cache: 'no-store',
+      headers: uniHeaders, cache: 'no-store',
     });
 
     if (firstRes.ok) {
@@ -178,10 +151,8 @@ export async function GET(request: Request) {
     while (nextCursor && allChats.length < maxChats) {
       const nextUrl = `https://${DSN}/api/v1/chats?limit=100&account_id=${ACCOUNT_ID}&cursor=${nextCursor}`;
       const nextRes = await fetch(nextUrl, {
-        headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-        cache: 'no-store',
+        headers: uniHeaders, cache: 'no-store',
       });
-
       if (!nextRes.ok) break;
       const nextData = await nextRes.json();
       const nextItems = nextData.items || nextData || [];
@@ -198,39 +169,39 @@ export async function GET(request: Request) {
       return true;
     });
 
-    // Enrich chats that have no name — batch fetch details for unnamed chats
-    // Do max 20 concurrent enrichments to avoid rate limiting
-    const unnamed = allChats.filter(c => !extractName(c));
-    const enrichBatch = unnamed.slice(0, 20);
-    
-    const enrichments = await Promise.allSettled(
-      enrichBatch.map(async (chat: any) => {
-        const info = await enrichChat(chat.id);
-        if (!info.name) {
-          // Last resort: check first message for sender name
-          info.name = await getFirstMessage(chat.id) || '';
-        }
-        return { chatId: chat.id, ...info };
-      })
-    );
+    // Enrich ALL chats that have no name — use the attendees endpoint
+    // Process in batches of 30 to stay within rate limits
+    const chatsToEnrich = allChats.filter(c => !extractNameFromChat(c));
+    const BATCH_SIZE = 30;
+    const enrichMap = new Map<string, { name: string; headline: string; company: string; profile_url: string }>();
 
-    const enrichMap = new Map<string, { name: string; headline: string; company: string }>();
-    for (const result of enrichments) {
-      if (result.status === 'fulfilled' && result.value.name) {
-        enrichMap.set(result.value.chatId, result.value);
+    for (let i = 0; i < Math.min(chatsToEnrich.length, BATCH_SIZE * 3); i += BATCH_SIZE) {
+      const batch = chatsToEnrich.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map(async (chat: any) => {
+          const info = await fetchAttendees(chat.id);
+          return { chatId: chat.id, ...info };
+        })
+      );
+
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value.name) {
+          enrichMap.set(result.value.chatId, result.value);
+        }
       }
     }
 
     const conversations = allChats.map((chat: any) => {
       const enriched = enrichMap.get(chat.id);
-      const baseName = extractName(chat);
-      
+      const baseName = extractNameFromChat(chat);
+
       return {
         id: chat.id,
         unipile_chat_id: chat.id,
         prospect_name: baseName || enriched?.name || 'LinkedIn Contact',
         prospect_headline: enriched?.headline || '',
         prospect_company: enriched?.company || '',
+        prospect_profile_url: enriched?.profile_url || '',
         state: 'new',
         last_message_at: chat.last_message_at || chat.updated_at || chat.timestamp || '',
         last_message_text: chat.last_message?.text || '',
