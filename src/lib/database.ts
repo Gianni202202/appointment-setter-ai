@@ -2,11 +2,17 @@ import { Conversation, Message, AgentConfig, ConversationState, DashboardMetrics
 
 // ============================================
 // In-Memory Database (replace with Supabase later)
-// For MVP, we store data in memory + JSON files
 // ============================================
 
 let conversations: Conversation[] = [];
 let allMessages: Message[] = [];
+
+// Connected LinkedIn account info
+let linkedInAccount: {
+  account_id: string;
+  name: string;
+  connected_at: string;
+} | null = null;
 
 const defaultConfig: AgentConfig = {
   icp: {
@@ -42,6 +48,38 @@ const defaultConfig: AgentConfig = {
 };
 
 let agentConfig: AgentConfig = { ...defaultConfig };
+
+// GLOBAL AGENT TOGGLE — starts OFF for safety
+let globalAgentEnabled = false;
+
+// ============================================
+// Global Agent Toggle
+// ============================================
+
+export function isAgentEnabled(): boolean {
+  return globalAgentEnabled;
+}
+
+export function setAgentEnabled(enabled: boolean): void {
+  globalAgentEnabled = enabled;
+  console.log(`[Agent] Global agent ${enabled ? 'ENABLED' : 'DISABLED'}`);
+}
+
+// ============================================
+// LinkedIn Account
+// ============================================
+
+export function getLinkedInAccount() {
+  return linkedInAccount;
+}
+
+export function setLinkedInAccount(data: { account_id: string; name: string }) {
+  linkedInAccount = { ...data, connected_at: new Date().toISOString() };
+}
+
+export function disconnectLinkedIn() {
+  linkedInAccount = null;
+}
 
 // ============================================
 // Conversation CRUD
@@ -104,7 +142,6 @@ export function addMessage(data: Omit<Message, 'id'>): Message {
   };
   allMessages.push(msg);
 
-  // Update conversation last_message_at
   const conv = conversations.find((c) => c.id === data.conversation_id);
   if (conv) {
     conv.last_message_at = data.sent_at;
@@ -131,6 +168,10 @@ export function getConfig(): AgentConfig {
 export function updateConfig(config: Partial<AgentConfig>): AgentConfig {
   agentConfig = { ...agentConfig, ...config };
   return agentConfig;
+}
+
+export function getDefaultConfig(): AgentConfig {
+  return { ...defaultConfig };
 }
 
 // ============================================
@@ -165,7 +206,6 @@ export function getMetrics(): DashboardMetrics {
 // ============================================
 
 export function seedDemoData(): void {
-  // Don't seed if already has data
   if (conversations.length > 0) return;
 
   const demoConversations: Conversation[] = [
@@ -247,22 +287,15 @@ export function seedDemoData(): void {
   ];
 
   const demoMessages: Message[] = [
-    // Conversation 1 - Engaged
     { id: 'msg-1a', conversation_id: 'demo-1', role: 'agent', content: 'Hey Mark, zag je recente post over SaaS-groei in de Benelux. Interessante take. Hoe gaan jullie om met outbound op dit moment?', sent_at: new Date(Date.now() - 86400000).toISOString(), is_read: true },
     { id: 'msg-1b', conversation_id: 'demo-1', role: 'prospect', content: 'Thanks Gianni! We doen nu vooral inbound maar merken dat we daar een plafond bereiken. Outbound is iets waar we naar kijken.', sent_at: new Date(Date.now() - 43200000).toISOString(), is_read: true },
     { id: 'msg-1c', conversation_id: 'demo-1', role: 'agent', content: 'Herkenbaar. Veel SaaS-bedrijven in jullie fase zien dat inbound plateaut rond series A. Wat is jullie biggest bottleneck — is het lead volume of conversie?', reasoning: 'Mark shows clear interest in outbound. Moving to qualify by understanding their specific pain point.', sent_at: new Date(Date.now() - 3600000).toISOString(), is_read: false },
-
-    // Conversation 2 - Qualified
     { id: 'msg-2a', conversation_id: 'demo-2', role: 'agent', content: 'Hey Sophie, viel me op dat TechFlow recent flink gegroeid is. Gefeliciteerd! Welke groeikanalen werken het best voor jullie?', sent_at: new Date(Date.now() - 172800000).toISOString(), is_read: true },
     { id: 'msg-2b', conversation_id: 'demo-2', role: 'prospect', content: 'Dankje! LinkedIn en content marketing vooral. Maar we willen nu ook outbound opschalen.', sent_at: new Date(Date.now() - 129600000).toISOString(), is_read: true },
     { id: 'msg-2c', conversation_id: 'demo-2', role: 'agent', content: 'Nice combo. Outbound met een sterke content-basis kan heel krachtig zijn. We helpen vergelijkbare bedrijven daar een systeem voor opzetten. Zou je open staan voor een kort gesprek daarover?', sent_at: new Date(Date.now() - 86400000).toISOString(), is_read: true },
     { id: 'msg-2d', conversation_id: 'demo-2', role: 'prospect', content: 'Ja, klinkt interessant. Volgende week heb ik donderdag of vrijdag ruimte.', sent_at: new Date(Date.now() - 7200000).toISOString(), is_read: true },
-
-    // Conversation 3 - Objection
     { id: 'msg-3a', conversation_id: 'demo-3', role: 'agent', content: 'Hey Thomas, indrukwekkend wat jullie met DataDriven aan het bouwen zijn. Hoe benaderen jullie nieuwe klanten op dit moment?', sent_at: new Date(Date.now() - 259200000).toISOString(), is_read: true },
     { id: 'msg-3b', conversation_id: 'demo-3', role: 'prospect', content: 'We hebben eigenlijk al een sales automation tool draaien. Apollo.io. Werkt prima voor ons.', sent_at: new Date(Date.now() - 14400000).toISOString(), is_read: true },
-
-    // Conversation 4 - Booked
     { id: 'msg-4a', conversation_id: 'demo-4', role: 'agent', content: 'Hey Lisa, CloudFirst groeit als een raket zie ik. Hoe houden jullie de pipeline gevuld bij die groei?', sent_at: new Date(Date.now() - 432000000).toISOString(), is_read: true },
     { id: 'msg-4b', conversation_id: 'demo-4', role: 'prospect', content: 'Dat is inderdaad de uitdaging haha. We zoeken actief naar betere manieren.', sent_at: new Date(Date.now() - 345600000).toISOString(), is_read: true },
     { id: 'msg-4c', conversation_id: 'demo-4', role: 'agent', content: 'Snap ik. We werken met een paar enterprise SaaS-bedrijven die dezelfde challenge hadden. Zal ik je laten zien hoe ze dat opgelost hebben?', sent_at: new Date(Date.now() - 259200000).toISOString(), is_read: true },

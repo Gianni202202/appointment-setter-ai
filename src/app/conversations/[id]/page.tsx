@@ -1,6 +1,8 @@
 import { getConversation } from '@/lib/database';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import ChatPanel from '@/components/ChatPanel';
+import QuickActions from '@/components/QuickActions';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,11 +30,6 @@ export default async function ConversationDetailPage({ params }: PageProps) {
 
   const info = stateLabels[conversation.state];
   const initials = conversation.prospect_name.split(' ').map((n: string) => n[0]).join('').slice(0, 2);
-
-  function formatTime(dateStr: string): string {
-    const d = new Date(dateStr);
-    return d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
-  }
 
   function formatDate(dateStr: string): string {
     const d = new Date(dateStr);
@@ -75,76 +72,13 @@ export default async function ConversationDetailPage({ params }: PageProps) {
           </div>
         </div>
 
-        {/* Messages */}
-        <div style={{
-          flex: 1, overflowY: 'auto', padding: '24px',
-          background: 'var(--bg-primary)',
-          display: 'flex', flexDirection: 'column', gap: '16px',
-        }}>
-          {conversation.messages.map((msg) => (
-            <div key={msg.id} className="animate-fadeIn">
-              {msg.role === 'prospect' ? (
-                <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                  <div className="avatar" style={{ width: '32px', height: '32px', fontSize: '12px' }}>
-                    {initials}
-                  </div>
-                  <div>
-                    <div className="chat-bubble-prospect">
-                      <p style={{ fontSize: '14px', lineHeight: '1.5' }}>{msg.content}</p>
-                    </div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', paddingLeft: '4px' }}>
-                      {formatTime(msg.sent_at)}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div>
-                  {msg.reasoning && (
-                    <div style={{
-                      fontSize: '11px', color: 'var(--text-muted)',
-                      background: 'rgba(139, 92, 246, 0.08)',
-                      border: '1px solid rgba(139, 92, 246, 0.15)',
-                      borderRadius: '8px', padding: '8px 12px',
-                      marginBottom: '8px', marginLeft: 'auto', maxWidth: '75%',
-                    }}>
-                      🧠 <strong>AI Reasoning:</strong> {msg.reasoning}
-                    </div>
-                  )}
-                  <div className={msg.role === 'human' ? 'chat-bubble-human' : 'chat-bubble-agent'}>
-                    <p style={{ fontSize: '14px', lineHeight: '1.5' }}>{msg.content}</p>
-                  </div>
-                  <div style={{
-                    fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px',
-                    textAlign: 'right', paddingRight: '4px',
-                  }}>
-                    {msg.role === 'human' ? '👤 You' : '🤖 AI'} • {formatTime(msg.sent_at)}
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* Message input */}
-        <div className="glass-card" style={{
-          padding: '16px 24px',
-          borderRadius: '0 0 16px 16px',
-          borderTop: '1px solid var(--border)',
-          display: 'flex', gap: '12px', alignItems: 'center',
-        }}>
-          <input
-            type="text"
-            className="input-field"
-            placeholder="Type a message to take over manually..."
-            style={{ flex: 1 }}
-          />
-          <button className="btn-primary" style={{ whiteSpace: 'nowrap' }}>
-            Send ↗
-          </button>
-          <button className="btn-secondary" style={{ whiteSpace: 'nowrap', fontSize: '13px' }}>
-            🤖 Let AI Respond
-          </button>
-        </div>
+        {/* Interactive Chat Panel */}
+        <ChatPanel
+          conversationId={conversation.id}
+          chatId={conversation.unipile_chat_id}
+          initials={initials}
+          initialMessages={conversation.messages}
+        />
       </div>
 
       {/* Sidebar info */}
@@ -198,26 +132,8 @@ export default async function ConversationDetailPage({ params }: PageProps) {
           </div>
         </div>
 
-        {/* Quick Actions */}
-        <div className="glass-card" style={{ padding: '24px', marginTop: '16px' }}>
-          <h3 style={{ fontSize: '14px', fontWeight: 700, marginBottom: '16px', color: 'var(--text-secondary)' }}>
-            QUICK ACTIONS
-          </h3>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <button className="btn-secondary" style={{ width: '100%', fontSize: '13px', textAlign: 'left' }}>
-              🤖 Generate AI Response
-            </button>
-            <button className="btn-secondary" style={{ width: '100%', fontSize: '13px', textAlign: 'left' }}>
-              �� Take Over (Handoff)
-            </button>
-            <button className="btn-secondary" style={{ width: '100%', fontSize: '13px', textAlign: 'left' }}>
-              📅 Mark as Booked
-            </button>
-            <button className="btn-secondary" style={{ width: '100%', fontSize: '13px', textAlign: 'left', color: 'var(--danger)' }}>
-              💀 Mark as Dead
-            </button>
-          </div>
-        </div>
+        {/* Interactive Quick Actions */}
+        <QuickActions conversationId={conversation.id} currentState={conversation.state} autoRespond={conversation.auto_respond} />
       </div>
     </div>
   );

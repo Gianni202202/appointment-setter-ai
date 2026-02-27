@@ -1,4 +1,7 @@
-import { getMetrics, getConversations } from '@/lib/database';
+import { getMetrics, getConversations, isAgentEnabled } from '@/lib/database';
+import AgentToggle from '@/components/AgentToggle';
+import LinkedInConnect from '@/components/LinkedInConnect';
+import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
 
@@ -6,9 +9,10 @@ export default function Dashboard() {
   const metrics = getMetrics();
   const conversations = getConversations();
   const recentConversations = conversations.slice(0, 5);
+  const agentEnabled = isAgentEnabled();
 
   const stateLabels: Record<string, { emoji: string; label: string; class: string }> = {
-    new: { emoji: '��', label: 'New', class: 'state-new' },
+    new: { emoji: '🆕', label: 'New', class: 'state-new' },
     engaged: { emoji: '💬', label: 'Engaged', class: 'state-engaged' },
     objection: { emoji: '⚡', label: 'Objection', class: 'state-objection' },
     qualified: { emoji: '🎯', label: 'Qualified', class: 'state-qualified' },
@@ -20,13 +24,19 @@ export default function Dashboard() {
   return (
     <div>
       {/* Header */}
-      <div style={{ marginBottom: '32px' }}>
+      <div style={{ marginBottom: '24px' }}>
         <h1 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '4px' }}>
           Dashboard
         </h1>
         <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
           Overview of your AI appointment setter performance
         </p>
+      </div>
+
+      {/* Agent Controls — top of dashboard */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '32px' }}>
+        <AgentToggle initialEnabled={agentEnabled} />
+        <LinkedInConnect />
       </div>
 
       {/* Metric Cards */}
@@ -121,19 +131,19 @@ export default function Dashboard() {
             <h2 style={{ fontSize: '16px', fontWeight: 700 }}>
               Recent Conversations
             </h2>
-            <a href="/conversations" style={{
+            <Link href="/conversations" style={{
               fontSize: '13px', color: 'var(--accent)', textDecoration: 'none',
               fontWeight: 500
             }}>
               View all →
-            </a>
+            </Link>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {recentConversations.map((conv) => {
               const info = stateLabels[conv.state];
               const initials = conv.prospect_name.split(' ').map(n => n[0]).join('').slice(0, 2);
               return (
-                <a
+                <Link
                   key={conv.id}
                   href={`/conversations/${conv.id}`}
                   className="conversation-item"
@@ -154,7 +164,7 @@ export default function Dashboard() {
                   <span className={`state-badge ${info?.class}`} style={{ fontSize: '11px' }}>
                     {info?.emoji} {info?.label}
                   </span>
-                </a>
+                </Link>
               );
             })}
           </div>
