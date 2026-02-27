@@ -2,18 +2,33 @@ import { NextResponse } from 'next/server';
 
 const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
+const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
 
 export async function GET(request: Request) {
   try {
-    if (!DSN || !API_KEY) {
+    if (!DSN || !API_KEY || !ACCOUNT_ID) {
       return NextResponse.json([]);
     }
 
     const { searchParams } = new URL(request.url);
     const chatId = searchParams.get('chat_id');
 
-    // Single chat with messages
+    // Single chat with messages — verify it belongs to our account
     if (chatId) {
+      // First verify this chat belongs to our account
+      const chatRes = await fetch(`https://${DSN}/api/v1/chats/${chatId}`, {
+        headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
+        cache: 'no-store',
+      });
+
+      if (chatRes.ok) {
+        const chatData = await chatRes.json();
+        // SECURITY: Only allow access to chats from our account
+        if (chatData.account_id && chatData.account_id !== ACCOUNT_ID) {
+          return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+        }
+      }
+
       const msgsRes = await fetch(`https://${DSN}/api/v1/chats/${chatId}/messages?limit=50`, {
         headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
         cache: 'no-store',
@@ -32,7 +47,6 @@ export async function GET(request: Request) {
         is_read: true,
       }));
 
-      // Sort oldest first
       messages.sort((a: any, b: any) =>
         new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime()
       );
@@ -40,13 +54,12 @@ export async function GET(request: Request) {
       return NextResponse.json({ messages });
     }
 
-    // Fetch all chats from Unipile (paginated, up to 200)
+    // SECURITY: Fetch ONLY chats for our specific account
     let allChats: any[] = [];
     let nextCursor: string | null = null;
     const maxChats = 200;
 
-    // First request
-    const firstUrl = `https://${DSN}/api/v1/chats?limit=100`;
+    const firstUrl = `https://${DSN}/api/v1/chats?limit=100&account_id=${ACCOUNT_ID}`;
     const firstRes = await fetch(firstUrl, {
       headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
       cache: 'no-store',
@@ -59,9 +72,8 @@ export async function GET(request: Request) {
       nextCursor = firstData.cursor || null;
     }
 
-    // Paginate if needed
     while (nextCursor && allChats.length < maxChats) {
-      const nextUrl = `https://${DSN}/api/v1/chats?limit=100&cursor=${nextCursor}`;
+      const nextUrl = `https://${DSN}/api/v1/chats?limit=100&account_id=${ACCOUNT_ID}&cursor=${nextCursor}`;
       const nextRes = await fetch(nextUrl, {
         headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
         cache: 'no-store',
@@ -77,10 +89,14 @@ export async function GET(request: Request) {
       nextCursor = nextData.cursor || null;
     }
 
-    // Trim to max
     allChats = allChats.slice(0, maxChats);
 
-    // Map to our conversation format
+    // EXTRA SECURITY: Double-check account_id on each chat
+    allChats = allChats.filter((chat: any) => {
+      if (chat.account_id && chat.account_id !== ACCOUNT_ID) return false;
+      return true;
+    });
+
     const conversations = allChats.map((chat: any) => {
       const otherParticipant = chat.attendees?.find((a: any) => !a.is_me) || chat.attendees?.[0];
 
@@ -99,7 +115,6 @@ export async function GET(request: Request) {
       };
     });
 
-    // Sort by most recent first
     conversations.sort((a: any, b: any) =>
       new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
     );
