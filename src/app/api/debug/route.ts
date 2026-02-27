@@ -86,8 +86,8 @@ export async function GET() {
             total_chats_returned: items.length,
             total_in_response: chatsData.total || 'not provided',
             unique_account_ids: uniqueIds,
-            all_match_configured: uniqueIds.every((id: string) => id === ACCOUNT_ID),
-            any_foreign: uniqueIds.filter((id: string) => id !== ACCOUNT_ID),
+            all_match_configured: uniqueIds.every((id) => id === ACCOUNT_ID),
+            any_foreign: uniqueIds.filter((id) => id !== ACCOUNT_ID),
           };
         }
       } catch (e) {
