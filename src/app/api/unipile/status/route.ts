@@ -1,23 +1,49 @@
 import { NextResponse } from 'next/server';
-import { getLinkedInAccount } from '@/lib/database';
+
+const DSN = process.env.UNIPILE_DSN || '';
+const API_KEY = process.env.UNIPILE_API_KEY || '';
 
 export async function GET() {
   try {
-    // Only check local app storage — this is set when user
-    // explicitly connects through our auth flow or webhook
-    const localAccount = getLinkedInAccount();
+    // Check Unipile API for connected LinkedIn accounts
+    // This is the source of truth — in-memory storage doesn't persist on Vercel
+    if (DSN && API_KEY) {
+      try {
+        const response = await fetch(`https://${DSN}/api/v1/accounts`, {
+          headers: {
+            'X-API-KEY': API_KEY,
+            'Accept': 'application/json',
+          },
+          cache: 'no-store',
+        });
 
-    if (localAccount) {
-      return NextResponse.json({
-        connected: true,
-        account_id: localAccount.account_id,
-        name: localAccount.name,
-        connected_at: localAccount.connected_at,
-        source: 'local',
-      });
+        if (response.ok) {
+          const data = await response.json();
+          const accounts = data.items || data || [];
+          const linkedinAccount = accounts.find((a: any) =>
+            a.type === 'LINKEDIN' || a.provider === 'LINKEDIN'
+          );
+
+          if (linkedinAccount) {
+            return NextResponse.json({
+              connected: true,
+              account_id: linkedinAccount.id,
+              name: linkedinAccount.name || linkedinAccount.identifier || 'LinkedIn Account',
+              status: linkedinAccount.status || 'OK',
+              source: 'unipile_api',
+            });
+          }
+        }
+      } catch (e) {
+        console.warn('[Unipile Status] API check failed:', e);
+      }
     }
 
-    return NextResponse.json({ connected: false });
+    // No Unipile credentials configured or no LinkedIn account found
+    return NextResponse.json({
+      connected: false,
+      reason: !DSN || !API_KEY ? 'no_credentials' : 'no_account',
+    });
   } catch (error) {
     return NextResponse.json({ connected: false, error: String(error) });
   }

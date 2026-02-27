@@ -1,25 +1,67 @@
-import { getMetrics, getConversations, isAgentEnabled } from '@/lib/database';
+'use client';
+
+import { useState, useEffect } from 'react';
 import AgentToggle from '@/components/AgentToggle';
 import LinkedInConnect from '@/components/LinkedInConnect';
 import Link from 'next/link';
 
-export const dynamic = 'force-dynamic';
+interface ChatConversation {
+  id: string;
+  prospect_name: string;
+  prospect_headline: string;
+  prospect_company: string;
+  last_message_at: string;
+  last_message_text: string;
+  state: string;
+  message_count: number;
+}
 
 export default function Dashboard() {
-  const metrics = getMetrics();
-  const conversations = getConversations();
-  const recentConversations = conversations.slice(0, 5);
-  const agentEnabled = isAgentEnabled();
+  const [conversations, setConversations] = useState<ChatConversation[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [linkedInConnected, setLinkedInConnected] = useState(false);
 
-  const stateLabels: Record<string, { emoji: string; label: string; class: string }> = {
-    new: { emoji: '🆕', label: 'New', class: 'state-new' },
-    engaged: { emoji: '💬', label: 'Engaged', class: 'state-engaged' },
-    objection: { emoji: '⚡', label: 'Objection', class: 'state-objection' },
-    qualified: { emoji: '🎯', label: 'Qualified', class: 'state-qualified' },
-    booked: { emoji: '📅', label: 'Booked', class: 'state-booked' },
-    dead: { emoji: '💀', label: 'Dead', class: 'state-dead' },
-    handoff: { emoji: '🙋', label: 'Handoff', class: 'state-handoff' },
-  };
+  useEffect(() => {
+    // Check if LinkedIn is connected
+    fetch('/api/unipile/status')
+      .then(res => res.json())
+      .then(data => {
+        setLinkedInConnected(data.connected);
+        // Only fetch conversations if connected
+        if (data.connected) {
+          return fetch('/api/conversations');
+        }
+        return null;
+      })
+      .then(res => res ? res.json() : [])
+      .then(data => {
+        if (Array.isArray(data)) {
+          setConversations(data);
+        }
+      })
+      .catch(err => console.error('Load failed:', err))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const total = conversations.length;
+  const recentConversations = conversations.slice(0, 5);
+
+  // Calculate basic metrics from conversations
+  const withMessages = conversations.filter(c => c.message_count > 0).length;
+  const replyRate = total > 0 ? Math.round((withMessages / total) * 100) : 0;
+
+  // Format relative time
+  function timeAgo(dateStr: string): string {
+    if (!dateStr) return '';
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    if (days < 7) return `${days}d ago`;
+    return new Date(dateStr).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' });
+  }
 
   return (
     <div>
@@ -35,7 +77,7 @@ export default function Dashboard() {
 
       {/* Agent Controls */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '32px' }}>
-        <AgentToggle initialEnabled={agentEnabled} />
+        <AgentToggle initialEnabled={false} />
         <LinkedInConnect />
       </div>
 
@@ -51,7 +93,7 @@ export default function Dashboard() {
             Total Conversations
           </div>
           <div style={{ fontSize: '36px', fontWeight: 800, color: 'var(--text-primary)' }}>
-            {metrics.total_conversations}
+            {loading ? '—' : total}
           </div>
         </div>
 
@@ -60,7 +102,7 @@ export default function Dashboard() {
             Active Conversations
           </div>
           <div style={{ fontSize: '36px', fontWeight: 800, color: 'var(--success)' }}>
-            {metrics.active_conversations}
+            {loading ? '—' : total}
           </div>
         </div>
 
@@ -69,7 +111,7 @@ export default function Dashboard() {
             Reply Rate
           </div>
           <div style={{ fontSize: '36px', fontWeight: 800, color: 'var(--accent)' }}>
-            {metrics.reply_rate}%
+            {loading ? '—' : `${replyRate}%`}
           </div>
         </div>
 
@@ -78,121 +120,79 @@ export default function Dashboard() {
             Meetings Booked
           </div>
           <div style={{ fontSize: '36px', fontWeight: 800, color: '#8b5cf6' }}>
-            {metrics.meetings_booked}
+            {loading ? '—' : 0}
           </div>
         </div>
       </div>
 
-      {/* Pipeline / Recent */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '32px' }}>
-        <div className="glass-card" style={{ padding: '24px' }}>
-          <h2 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '20px' }}>
-            Pipeline Overview
+      {/* Recent Conversations */}
+      <div className="glass-card" style={{ padding: '24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <h2 style={{ fontSize: '16px', fontWeight: 700 }}>
+            Recent Conversations
           </h2>
-          {metrics.total_conversations === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 0' }}>
-              <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '8px' }}>
-                No conversations yet
-              </p>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                Connect LinkedIn and sync chats to get started
-              </p>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {Object.entries(metrics.conversations_by_state).map(([state, count]) => {
-                const info = stateLabels[state];
-                const percentage = metrics.total_conversations > 0
-                  ? (count / metrics.total_conversations) * 100
-                  : 0;
-                return (
-                  <div key={state}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                      <span className={`state-badge ${info?.class}`}>
-                        {info?.emoji} {info?.label}
-                      </span>
-                      <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                        {count}
-                      </span>
-                    </div>
-                    <div style={{
-                      height: '6px',
-                      background: 'var(--bg-secondary)',
-                      borderRadius: '3px',
-                      overflow: 'hidden',
-                    }}>
-                      <div style={{
-                        height: '100%',
-                        width: `${percentage}%`,
-                        background: 'var(--accent)',
-                        borderRadius: '3px',
-                        transition: 'width 0.5s ease',
-                      }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          {total > 0 && (
+            <Link href="/conversations" style={{
+              fontSize: '13px', color: 'var(--accent)', textDecoration: 'none', fontWeight: 500
+            }}>
+              View all {total} →
+            </Link>
           )}
         </div>
 
-        {/* Recent Conversations */}
-        <div className="glass-card" style={{ padding: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-            <h2 style={{ fontSize: '16px', fontWeight: 700 }}>
-              Recent Conversations
-            </h2>
-            {conversations.length > 0 && (
-              <Link href="/conversations" style={{
-                fontSize: '13px', color: 'var(--accent)', textDecoration: 'none',
-                fontWeight: 500
-              }}>
-                View all →
-              </Link>
-            )}
+        {loading ? (
+          <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '14px' }}>
+            Loading conversations...
           </div>
-          {recentConversations.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px 0' }}>
-              <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '8px' }}>
-                No conversations yet
-              </p>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                Conversations will appear here after syncing your LinkedIn chats
-              </p>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {recentConversations.map((conv) => {
-                const info = stateLabels[conv.state];
-                const initials = conv.prospect_name.split(' ').map(n => n[0]).join('').slice(0, 2);
-                return (
-                  <Link
-                    key={conv.id}
-                    href={`/conversations/${conv.id}`}
-                    className="conversation-item"
-                    style={{ textDecoration: 'none', color: 'inherit' }}
-                  >
-                    <div className="avatar">{initials}</div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '2px' }}>
-                        {conv.prospect_name}
-                      </div>
-                      <div style={{
-                        fontSize: '12px', color: 'var(--text-muted)',
-                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-                      }}>
-                        {conv.prospect_headline}
-                      </div>
+        ) : !linkedInConnected ? (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+              Connect your LinkedIn account first
+            </p>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+              Use the Connect LinkedIn button above to get started
+            </p>
+          </div>
+        ) : recentConversations.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '40px 0' }}>
+            <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+              No conversations found
+            </p>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+              Click &quot;Sync Chats&quot; to pull your LinkedIn conversations
+            </p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {recentConversations.map((conv) => {
+              const initials = conv.prospect_name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+              return (
+                <Link
+                  key={conv.id}
+                  href={`/conversations/${conv.id}`}
+                  className="conversation-item"
+                  style={{ textDecoration: 'none', color: 'inherit' }}
+                >
+                  <div className="avatar">{initials}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '2px' }}>
+                      {conv.prospect_name}
                     </div>
-                    <span className={`state-badge ${info?.class}`} style={{ fontSize: '11px' }}>
-                      {info?.emoji} {info?.label}
-                    </span>
-                  </Link>
-                );
-              })}
-            </div>
-          )}
-        </div>
+                    <div style={{
+                      fontSize: '12px', color: 'var(--text-muted)',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                    }}>
+                      {conv.last_message_text || conv.prospect_headline || 'No messages yet'}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', flexShrink: 0 }}>
+                    {timeAgo(conv.last_message_at)}
+                  </span>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

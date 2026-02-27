@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 interface SyncedConversation {
   id: string;
@@ -17,6 +17,7 @@ export default function LinkedInConnect() {
     name?: string;
     account_id?: string;
     status?: string;
+    reason?: string;
   }>({ connected: false });
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
@@ -26,9 +27,13 @@ export default function LinkedInConnect() {
     synced: SyncedConversation[];
     message: string;
   } | null>(null);
+  const pollRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     checkStatus();
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, []);
 
   async function checkStatus() {
@@ -37,6 +42,12 @@ export default function LinkedInConnect() {
       if (res.ok) {
         const data = await res.json();
         setStatus(data);
+        // Stop polling if connected
+        if (data.connected && pollRef.current) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          setConnecting(false);
+        }
       }
     } catch (err) {
       console.error('Status check failed:', err);
@@ -57,18 +68,35 @@ export default function LinkedInConnect() {
       if (res.ok) {
         const data = await res.json();
         if (data.url) {
-          window.open(data.url, '_blank', 'width=600,height=700');
+          // Open auth popup
+          const popup = window.open(data.url, '_blank', 'width=600,height=700');
+
+          // Start polling for connection status every 5 seconds
+          // The user will complete auth in the popup, and we'll detect it
+          pollRef.current = setInterval(() => {
+            checkStatus();
+          }, 5000);
+
+          // Also detect popup close
+          const checkPopup = setInterval(() => {
+            if (popup && popup.closed) {
+              clearInterval(checkPopup);
+              // Give it a moment, then check status
+              setTimeout(() => checkStatus(), 2000);
+            }
+          }, 1000);
         } else {
           alert('No auth URL received. Check your Unipile configuration.');
+          setConnecting(false);
         }
       } else {
         const err = await res.json();
-        alert(`Connection failed: ${err.error}\n\nMake sure UNIPILE_DSN and UNIPILE_API_KEY are set in your .env.local file.`);
+        alert(`Connection failed: ${err.error}\n\nMake sure UNIPILE_DSN and UNIPILE_API_KEY are set in your environment variables.`);
+        setConnecting(false);
       }
     } catch (err) {
       console.error('Connect failed:', err);
       alert('Failed to connect. Check console for details.');
-    } finally {
       setConnecting(false);
     }
   }
@@ -128,7 +156,12 @@ export default function LinkedInConnect() {
               </div>
             ) : (
               <p style={{ fontSize: '13px', color: 'var(--text-secondary)', margin: 0 }}>
-                Connect your LinkedIn account to sync conversations and start the AI agent.
+                {connecting
+                  ? 'Waiting for you to complete LinkedIn authentication...'
+                  : status.reason === 'no_credentials'
+                    ? 'Unipile API credentials not configured. Add UNIPILE_DSN and UNIPILE_API_KEY to your environment variables.'
+                    : 'Connect your LinkedIn account to sync conversations and start the AI agent.'
+                }
               </p>
             )}
           </div>
@@ -162,7 +195,7 @@ export default function LinkedInConnect() {
                 onClick={connectLinkedIn}
                 disabled={connecting}
               >
-                {connecting ? '⏳ Connecting...' : '🔗 Connect LinkedIn'}
+                {connecting ? '⏳ Waiting for auth...' : '🔗 Connect LinkedIn'}
               </button>
             )}
           </div>
@@ -235,8 +268,8 @@ export default function LinkedInConnect() {
         </div>
       )}
 
-      {/* How it works card — only show when not connected */}
-      {!status.connected && (
+      {/* How it works card — only show when not connected and not connecting */}
+      {!status.connected && !connecting && (
         <div className="glass-card" style={{ padding: '24px' }}>
           <h3 style={{ fontSize: '14px', fontWeight: 700, marginBottom: '16px' }}>
             🛡️ How it works — Your safety is guaranteed
