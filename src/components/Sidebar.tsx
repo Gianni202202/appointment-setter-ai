@@ -2,9 +2,31 @@
 
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
+import { useState, useEffect } from 'react';
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const [agentActive, setAgentActive] = useState(false);
+  const [linkedInConnected, setLinkedInConnected] = useState(false);
+
+  useEffect(() => {
+    fetch('/api/agent/toggle')
+      .then(res => res.json())
+      .then(data => setAgentActive(data.enabled))
+      .catch(() => setAgentActive(false));
+
+    fetch('/api/unipile/status')
+      .then(res => res.json())
+      .then(data => setLinkedInConnected(data.connected))
+      .catch(() => setLinkedInConnected(false));
+  }, []);
+
+  useEffect(() => {
+    fetch('/api/agent/toggle')
+      .then(res => res.json())
+      .then(data => setAgentActive(data.enabled))
+      .catch(() => {});
+  }, [pathname]);
 
   const links = [
     { href: '/', label: 'Dashboard', icon: (
@@ -77,16 +99,23 @@ export default function Sidebar() {
         border: '1px solid var(--border)',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-          <div className="pulse-live" style={{
+          <div style={{
             width: '8px', height: '8px', borderRadius: '50%',
-            background: 'var(--success)'
+            background: agentActive ? 'var(--success)' : 'var(--danger)',
+            ...(agentActive ? { animation: 'pulse 2s infinite' } : {}),
           }} />
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--success)' }}>
-            Agent Active
+          <span style={{
+            fontSize: '12px', fontWeight: 600,
+            color: agentActive ? 'var(--success)' : 'var(--danger)',
+          }}>
+            Agent {agentActive ? 'Active' : 'Inactive'}
           </span>
         </div>
         <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-          Connected to Unipile
+          {linkedInConnected
+            ? (agentActive ? 'Responding to messages' : 'LinkedIn connected · Agent paused')
+            : 'LinkedIn not connected'
+          }
         </div>
       </div>
     </nav>

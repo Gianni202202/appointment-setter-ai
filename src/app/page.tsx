@@ -33,7 +33,7 @@ export default function Dashboard() {
         </p>
       </div>
 
-      {/* Agent Controls — top of dashboard */}
+      {/* Agent Controls */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '32px' }}>
         <AgentToggle initialEnabled={agentEnabled} />
         <LinkedInConnect />
@@ -83,46 +83,57 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Pipeline / State Distribution */}
+      {/* Pipeline / Recent */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '32px' }}>
         <div className="glass-card" style={{ padding: '24px' }}>
           <h2 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '20px' }}>
             Pipeline Overview
           </h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {Object.entries(metrics.conversations_by_state).map(([state, count]) => {
-              const info = stateLabels[state];
-              const percentage = metrics.total_conversations > 0
-                ? (count / metrics.total_conversations) * 100
-                : 0;
-              return (
-                <div key={state}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                    <span className={`state-badge ${info?.class}`}>
-                      {info?.emoji} {info?.label}
-                    </span>
-                    <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                      {count}
-                    </span>
-                  </div>
-                  <div style={{
-                    height: '6px',
-                    background: 'var(--bg-secondary)',
-                    borderRadius: '3px',
-                    overflow: 'hidden',
-                  }}>
+          {metrics.total_conversations === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px 0' }}>
+              <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                No conversations yet
+              </p>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                Connect LinkedIn and sync chats to get started
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {Object.entries(metrics.conversations_by_state).map(([state, count]) => {
+                const info = stateLabels[state];
+                const percentage = metrics.total_conversations > 0
+                  ? (count / metrics.total_conversations) * 100
+                  : 0;
+                return (
+                  <div key={state}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
+                      <span className={`state-badge ${info?.class}`}>
+                        {info?.emoji} {info?.label}
+                      </span>
+                      <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                        {count}
+                      </span>
+                    </div>
                     <div style={{
-                      height: '100%',
-                      width: `${percentage}%`,
-                      background: 'var(--accent)',
+                      height: '6px',
+                      background: 'var(--bg-secondary)',
                       borderRadius: '3px',
-                      transition: 'width 0.5s ease',
-                    }} />
+                      overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        height: '100%',
+                        width: `${percentage}%`,
+                        background: 'var(--accent)',
+                        borderRadius: '3px',
+                        transition: 'width 0.5s ease',
+                      }} />
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Recent Conversations */}
@@ -131,43 +142,56 @@ export default function Dashboard() {
             <h2 style={{ fontSize: '16px', fontWeight: 700 }}>
               Recent Conversations
             </h2>
-            <Link href="/conversations" style={{
-              fontSize: '13px', color: 'var(--accent)', textDecoration: 'none',
-              fontWeight: 500
-            }}>
-              View all →
-            </Link>
+            {conversations.length > 0 && (
+              <Link href="/conversations" style={{
+                fontSize: '13px', color: 'var(--accent)', textDecoration: 'none',
+                fontWeight: 500
+              }}>
+                View all →
+              </Link>
+            )}
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            {recentConversations.map((conv) => {
-              const info = stateLabels[conv.state];
-              const initials = conv.prospect_name.split(' ').map(n => n[0]).join('').slice(0, 2);
-              return (
-                <Link
-                  key={conv.id}
-                  href={`/conversations/${conv.id}`}
-                  className="conversation-item"
-                  style={{ textDecoration: 'none', color: 'inherit' }}
-                >
-                  <div className="avatar">{initials}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '2px' }}>
-                      {conv.prospect_name}
+          {recentConversations.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '40px 0' }}>
+              <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                No conversations yet
+              </p>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                Conversations will appear here after syncing your LinkedIn chats
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              {recentConversations.map((conv) => {
+                const info = stateLabels[conv.state];
+                const initials = conv.prospect_name.split(' ').map(n => n[0]).join('').slice(0, 2);
+                return (
+                  <Link
+                    key={conv.id}
+                    href={`/conversations/${conv.id}`}
+                    className="conversation-item"
+                    style={{ textDecoration: 'none', color: 'inherit' }}
+                  >
+                    <div className="avatar">{initials}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: '14px', marginBottom: '2px' }}>
+                        {conv.prospect_name}
+                      </div>
+                      <div style={{
+                        fontSize: '12px', color: 'var(--text-muted)',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+                      }}>
+                        {conv.prospect_headline}
+                      </div>
                     </div>
-                    <div style={{
-                      fontSize: '12px', color: 'var(--text-muted)',
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
-                    }}>
-                      {conv.prospect_headline}
-                    </div>
-                  </div>
-                  <span className={`state-badge ${info?.class}`} style={{ fontSize: '11px' }}>
-                    {info?.emoji} {info?.label}
-                  </span>
-                </Link>
-              );
-            })}
-          </div>
+                    <span className={`state-badge ${info?.class}`} style={{ fontSize: '11px' }}>
+                      {info?.emoji} {info?.label}
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>
