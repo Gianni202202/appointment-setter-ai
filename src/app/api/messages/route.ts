@@ -39,7 +39,7 @@ export async function POST(request: Request) {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, linkedin_messaging_type: 'LINKEDIN' }),
     });
 
     if (!sendRes.ok) {

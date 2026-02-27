@@ -80,6 +80,7 @@ export async function sendMessage(chatId: string, text: string): Promise<Unipile
 
   const formData = new FormData();
   formData.append('text', text);
+  formData.append('linkedin_messaging_type', 'LINKEDIN');
 
   return unipileRequest(`/chats/${chatId}/messages`, {
     method: 'POST',
