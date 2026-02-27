@@ -6,8 +6,11 @@ const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
 
 const uniHeaders = { 'X-API-KEY': API_KEY, 'Accept': 'application/json' };
 
-// Fetch attendees for a chat using the dedicated endpoint
-async function fetchAttendees(chatId: string): Promise<{ name: string; headline: string; company: string; profile_url: string }> {
+// Fetch attendees for a chat using Unipile's dedicated /attendees endpoint
+// Per Unipile docs: NO rate limits on read operations (chats, messages, attendees)
+async function fetchAttendees(chatId: string): Promise<{
+  name: string; headline: string; company: string; profile_url: string;
+}> {
   try {
     const res = await fetch(`https://${DSN}/api/v1/chats/${chatId}/attendees`, {
       headers: uniHeaders,
@@ -16,8 +19,8 @@ async function fetchAttendees(chatId: string): Promise<{ name: string; headline:
     if (!res.ok) return { name: '', headline: '', company: '', profile_url: '' };
     const data = await res.json();
     const attendees = data.items || data || [];
-    
-    // Find the non-me attendee
+
+    // Find the OTHER person (not me)
     for (const a of attendees) {
       if (a.is_me) continue;
       return {
@@ -27,7 +30,7 @@ async function fetchAttendees(chatId: string): Promise<{ name: string; headline:
         profile_url: a.profile_url || '',
       };
     }
-    // Fallback to first attendee
+    // Fallback to first attendee if no "not me" found
     if (attendees.length > 0) {
       const a = attendees[0];
       return {
@@ -43,7 +46,7 @@ async function fetchAttendees(chatId: string): Promise<{ name: string; headline:
   }
 }
 
-// Extract name from chat object (fast path, no extra API call)
+// Quick name extraction from chat object (no API call needed)
 function extractNameFromChat(chat: any): string {
   if (chat.attendees && Array.isArray(chat.attendees)) {
     for (const a of chat.attendees) {
@@ -52,8 +55,6 @@ function extractNameFromChat(chat: any): string {
       if (name && name !== 'Unknown') return name;
     }
   }
-  if (chat.name && chat.name !== 'Unknown') return chat.name;
-  if (chat.title && chat.title !== 'Unknown') return chat.title;
   return '';
 }
 
@@ -83,13 +84,13 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: 'Access denied' }, { status: 403 });
       }
 
-      // Get attendees via dedicated endpoint
-      const attendeeInfo = await fetchAttendees(chatId);
-
-      // Get messages
-      const msgsRes = await fetch(`https://${DSN}/api/v1/chats/${chatId}/messages?limit=50`, {
-        headers: uniHeaders, cache: 'no-store',
-      });
+      // Fetch attendees + messages in parallel
+      const [attendeeInfo, msgsRes] = await Promise.all([
+        fetchAttendees(chatId),
+        fetch(`https://${DSN}/api/v1/chats/${chatId}/messages?limit=50`, {
+          headers: uniHeaders, cache: 'no-store',
+        }),
+      ]);
 
       let messages: any[] = [];
       if (msgsRes.ok) {
@@ -102,16 +103,14 @@ export async function GET(request: Request) {
           sender_name: msg.sender?.display_name || msg.sender?.name || '',
           is_read: true,
         }));
-
         messages.sort((a: any, b: any) =>
           new Date(a.sent_at).getTime() - new Date(b.sent_at).getTime()
         );
       }
 
-      // Pick best name
+      // Best name: attendees endpoint > chat object > message sender
       let prospect_name = attendeeInfo.name || extractNameFromChat(chatData);
       if (!prospect_name) {
-        // Last resort: get name from messages
         for (const msg of messages) {
           if (msg.role === 'prospect' && msg.sender_name) {
             prospect_name = msg.sender_name;
@@ -131,13 +130,14 @@ export async function GET(request: Request) {
     }
 
     // =============================================
-    // CHAT LIST — with enriched names
+    // CHAT LIST — fetch all chats with pagination
+    // Per Unipile docs: use limit up to 250, cursor for pagination
     // =============================================
     let allChats: any[] = [];
     let nextCursor: string | null = null;
-    const maxChats = 200;
 
-    const firstUrl = `https://${DSN}/api/v1/chats?limit=100&account_id=${ACCOUNT_ID}`;
+    // Fetch with max limit of 250 per Unipile docs
+    const firstUrl = `https://${DSN}/api/v1/chats?limit=250&account_id=${ACCOUNT_ID}`;
     const firstRes = await fetch(firstUrl, {
       headers: uniHeaders, cache: 'no-store',
     });
@@ -148,8 +148,9 @@ export async function GET(request: Request) {
       nextCursor = firstData.cursor || null;
     }
 
-    while (nextCursor && allChats.length < maxChats) {
-      const nextUrl = `https://${DSN}/api/v1/chats?limit=100&account_id=${ACCOUNT_ID}&cursor=${nextCursor}`;
+    // Continue paginating until we have everything
+    while (nextCursor) {
+      const nextUrl = `https://${DSN}/api/v1/chats?limit=250&account_id=${ACCOUNT_ID}&cursor=${nextCursor}`;
       const nextRes = await fetch(nextUrl, {
         headers: uniHeaders, cache: 'no-store',
       });
@@ -161,22 +162,23 @@ export async function GET(request: Request) {
       nextCursor = nextData.cursor || null;
     }
 
-    allChats = allChats.slice(0, maxChats);
-
     // Security filter
     allChats = allChats.filter((chat: any) => {
       if (chat.account_id && chat.account_id !== ACCOUNT_ID) return false;
       return true;
     });
 
-    // Enrich ALL chats that have no name — use the attendees endpoint
-    // Process in batches of 30 to stay within rate limits
-    const chatsToEnrich = allChats.filter(c => !extractNameFromChat(c));
-    const BATCH_SIZE = 30;
+    // =============================================
+    // ENRICH ALL unnamed chats with /attendees endpoint
+    // Per Unipile docs: NO rate limits on read operations
+    // Process in batches of 50 concurrent requests for efficiency
+    // =============================================
+    const BATCH_SIZE = 50;
+    const chatsNeedingNames = allChats.filter(c => !extractNameFromChat(c));
     const enrichMap = new Map<string, { name: string; headline: string; company: string; profile_url: string }>();
 
-    for (let i = 0; i < Math.min(chatsToEnrich.length, BATCH_SIZE * 3); i += BATCH_SIZE) {
-      const batch = chatsToEnrich.slice(i, i + BATCH_SIZE);
+    for (let i = 0; i < chatsNeedingNames.length; i += BATCH_SIZE) {
+      const batch = chatsNeedingNames.slice(i, i + BATCH_SIZE);
       const results = await Promise.allSettled(
         batch.map(async (chat: any) => {
           const info = await fetchAttendees(chat.id);
@@ -191,6 +193,7 @@ export async function GET(request: Request) {
       }
     }
 
+    // Build final response
     const conversations = allChats.map((chat: any) => {
       const enriched = enrichMap.get(chat.id);
       const baseName = extractNameFromChat(chat);
@@ -210,6 +213,7 @@ export async function GET(request: Request) {
       };
     });
 
+    // Sort by most recent first
     conversations.sort((a: any, b: any) =>
       new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
     );
