@@ -7,19 +7,14 @@ const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
 export async function GET() {
   try {
     const result: any = {
-      config: {
-        dsn_set: !!DSN,
-        api_key_set: !!API_KEY,
-        configured_account_id: ACCOUNT_ID || 'NOT SET',
-        anthropic_key_set: !!process.env.ANTHROPIC_API_KEY,
-      },
+      configured_account_id: ACCOUNT_ID || 'NOT SET',
     };
 
     if (!DSN || !API_KEY) {
       return NextResponse.json(result);
     }
 
-    // 1. List ALL accounts in the workspace
+    // 1. List ALL accounts — show FULL raw data for Gianni accounts
     try {
       const accRes = await fetch(`https://${DSN}/api/v1/accounts`, {
         headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
@@ -28,96 +23,75 @@ export async function GET() {
       if (accRes.ok) {
         const accData = await accRes.json();
         const accounts = accData.items || accData || [];
-        result.all_accounts = accounts.map((a: any) => ({
-          id: a.id,
-          name: a.name || a.identifier,
-          type: a.type,
-          provider: a.provider,
-          status: a.status,
-          is_configured: a.id === ACCOUNT_ID,
-        }));
-        result.total_accounts = accounts.length;
+        
+        // Show ALL fields for Gianni accounts
+        const gianniAccounts = accounts.filter((a: any) => 
+          (a.name || '').toLowerCase().includes('gianni')
+        );
+        
+        result.gianni_accounts_full_raw = gianniAccounts;
+        result.total_accounts_in_workspace = accounts.length;
       }
     } catch (e) {
-      result.all_accounts_error = String(e);
+      result.accounts_error = String(e);
     }
 
-    // 2. Fetch 3 chats WITH account_id filter and show FULL raw data
-    try {
-      const url = `https://${DSN}/api/v1/chats?limit=3&account_id=${ACCOUNT_ID}`;
-      const chatsRes = await fetch(url, {
-        headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-        cache: 'no-store',
-      });
-      if (chatsRes.ok) {
-        const chatsData = await chatsRes.json();
-        const items = chatsData.items || chatsData || [];
-        result.filtered_chats = {
-          url_used: url,
-          total_returned: items.length,
-          cursor: chatsData.cursor || null,
-          sample: items.slice(0, 3).map((c: any) => ({
-            id: c.id,
-            account_id: c.account_id,
-            name: c.name,
-            provider: c.provider,
-            type: c.type,
-            attendees_raw: c.attendees,
-            last_message_at: c.last_message_at,
-          })),
-        };
-      }
-    } catch (e) {
-      result.filtered_chats_error = String(e);
-    }
+    // 2. For each Gianni account, check LATEST chat date
+    const gianniIds = [
+      '-7n9l_NGTdaJ5oGB_izo7A',
+      'UYXCnTMwRRW9tfmZEbXLEQ', 
+      'pju_epCjRcKZf6DoB2Axew',
+      'e3ce2w5zT4ySVsm6nr2S5w',
+    ];
 
-    // 3. Fetch 3 chats WITHOUT account_id filter 
-    try {
-      const url = `https://${DSN}/api/v1/chats?limit=3`;
-      const chatsRes = await fetch(url, {
-        headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-        cache: 'no-store',
-      });
-      if (chatsRes.ok) {
-        const chatsData = await chatsRes.json();
-        const items = chatsData.items || chatsData || [];
-        result.unfiltered_chats = {
-          url_used: url,
-          total_returned: items.length,
-          sample: items.slice(0, 3).map((c: any) => ({
-            id: c.id,
-            account_id: c.account_id,
-            name: c.name,
-          })),
-        };
+    result.gianni_accounts_comparison = [];
+    
+    for (const accId of gianniIds) {
+      try {
+        const chatsRes = await fetch(`https://${DSN}/api/v1/chats?limit=1&account_id=${accId}`, {
+          headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
+          cache: 'no-store',
+        });
+        const entry: any = { account_id: accId, is_configured: accId === ACCOUNT_ID };
+        
+        if (chatsRes.ok) {
+          const chatsData = await chatsRes.json();
+          const items = chatsData.items || chatsData || [];
+          entry.total_chats = items.length > 0 ? 'at least 1' : '0';
+          if (items.length > 0) {
+            entry.most_recent_chat = {
+              id: items[0].id,
+              name: items[0].name,
+              last_message_at: items[0].last_message_at,
+              updated_at: items[0].updated_at,
+              created_at: items[0].created_at,
+            };
+          }
+        } else {
+          entry.error = `HTTP ${chatsRes.status}`;
+        }
+        
+        // Also get account details
+        try {
+          const accDetailRes = await fetch(`https://${DSN}/api/v1/accounts/${accId}`, {
+            headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
+            cache: 'no-store',
+          });
+          if (accDetailRes.ok) {
+            const detail = await accDetailRes.json();
+            entry.account_status = detail.status;
+            entry.account_created = detail.created_at;
+            entry.connection_params = detail.connection_params;
+            entry.sources = detail.sources;
+          }
+        } catch {}
+        
+        result.gianni_accounts_comparison.push(entry);
+      } catch (e) {
+        result.gianni_accounts_comparison.push({ 
+          account_id: accId, error: String(e) 
+        });
       }
-    } catch (e) {
-      result.unfiltered_chats_error = String(e);
-    }
-
-    // 4. Now try to fetch chats from the OTHER account the user mentioned
-    const OTHER_ACCOUNT = '-7n9l_NGTdaJ5oGB_izo7A';
-    try {
-      const url = `https://${DSN}/api/v1/chats?limit=3&account_id=${OTHER_ACCOUNT}`;
-      const chatsRes = await fetch(url, {
-        headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-        cache: 'no-store',
-      });
-      if (chatsRes.ok) {
-        const chatsData = await chatsRes.json();
-        const items = chatsData.items || chatsData || [];
-        result.other_account_chats = {
-          account_id_used: OTHER_ACCOUNT,
-          total_returned: items.length,
-          sample: items.slice(0, 3).map((c: any) => ({
-            id: c.id,
-            account_id: c.account_id,
-            name: c.name,
-          })),
-        };
-      }
-    } catch (e) {
-      result.other_account_chats_error = String(e);
     }
 
     return NextResponse.json(result, { status: 200 });
