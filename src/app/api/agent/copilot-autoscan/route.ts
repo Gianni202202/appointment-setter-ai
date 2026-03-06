@@ -84,11 +84,14 @@ async function scanChats(targetCount: number, cursor: string | null) {
         continue;
       }
 
-      // Skip chats that already have drafts
+      // Skip chats that already have drafts — use draft's stored prospect name
       if (draftChatIds.has(chatId)) {
+        const draftForChat = existingDrafts.find(d => d.chat_id === chatId);
+        const draftName = draftForChat?.prospect_name && draftForChat.prospect_name !== 'LinkedIn Contact'
+          ? draftForChat.prospect_name : chatName;
         results.push({
           chat_id: chatId,
-          name: chatName,
+          name: draftName,
           status: 'has_draft',
           reason: 'Draft al aanwezig',
           interest_score: 0,
@@ -112,6 +115,38 @@ async function scanChats(targetCount: number, cursor: string | null) {
 
         const msgsData = await msgsRes.json();
         const rawMsgs = msgsData.items || msgsData || [];
+
+        // If name is still Unknown, try to extract from message sender info
+        if (chatName === 'Unknown') {
+          for (const msg of rawMsgs) {
+            if (msg.is_sender || msg.sender?.is_me) continue;
+            const senderName = msg.sender?.display_name || msg.sender?.name || '';
+            if (senderName && senderName !== 'Unknown') {
+              chatName = senderName;
+              break;
+            }
+          }
+        }
+
+        // Last resort: fetch attendees API (only if still Unknown to minimize API calls)
+        if (chatName === 'Unknown') {
+          try {
+            const attUrl = 'https://' + DSN + '/api/v1/chats/' + chatId + '/attendees';
+            const attRes = await fetch(attUrl, {
+              headers: { 'X-API-KEY': API_KEY, Accept: 'application/json' },
+              cache: 'no-store',
+            });
+            if (attRes.ok) {
+              const aData = await attRes.json();
+              const attendees = aData.items || aData || [];
+              for (const a of attendees) {
+                if (a.is_me) continue;
+                chatName = a.display_name || a.name || chatName;
+                break;
+              }
+            }
+          } catch {}
+        }
 
         if (rawMsgs.length === 0) {
           results.push({ chat_id: chatId, name: chatName, status: 'empty', reason: 'Geen berichten', interest_score: 0, interest_reasons: [] });

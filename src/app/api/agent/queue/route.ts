@@ -74,6 +74,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true });
     }
 
+    if (action === 'cancel') {
+      // Cancel a scheduled/approved draft — remove it entirely
+      await removeDraft(draft_id);
+      await logActivity('draft_rejected', draft.prospect_name || 'Unknown', { draft_id, chat_id: draft.chat_id, cancelled: true });
+      return NextResponse.json({ success: true });
+    }
+
     if (action === 'edit') {
       if (!message) {
         return NextResponse.json({ error: 'message is required for edit action' }, { status: 400 });

@@ -606,7 +606,9 @@ export default function Dashboard() {
       if (res.ok) {
         const data = await res.json();
         showToast(`✓ ${data.scheduled_count} messages scheduled with human-like timing`, 'success');
-        // Refresh only drafts, not full page
+        // Optimistically clear approved drafts from UI so button disappears immediately
+        setDrafts(prev => prev.filter(d => !approvedIds.includes(d.id)));
+        // Also refresh from server for accuracy
         try {
           const qRes = await fetch('/api/agent/queue');
           if (qRes.ok) {
@@ -621,6 +623,24 @@ export default function Dashboard() {
       }
     } catch (err) { showToast('✕ Error: ' + err, 'error'); }
     finally { setSendingBatch(false); }
+  }
+
+  async function cancelDraft(draftId: string) {
+    try {
+      const res = await fetch('/api/agent/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'cancel', draft_id: draftId }),
+      });
+      if (res.ok) {
+        // Remove from UI immediately
+        setDrafts(prev => prev.filter(d => d.id !== draftId));
+        showToast('Verzending geannuleerd', 'info');
+      } else {
+        const err = await res.json();
+        showToast('Annuleren mislukt: ' + (err.error || ''), 'error');
+      }
+    } catch (err) { showToast('Error: ' + err, 'error'); }
   }
 
   async function syncChats() {
@@ -700,8 +720,8 @@ export default function Dashboard() {
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <button className="btn-secondary" onClick={loadAll} style={{ fontSize: '13px', padding: '8px 14px' }}>
-            🔄 Refresh
+          <button className="btn-secondary" onClick={async () => { setLoading(true); await loadAll(); showToast('Dashboard vernieuwd', 'info'); }} style={{ fontSize: '13px', padding: '8px 14px' }}>
+            {loading ? '⏳ Laden...' : '🔄 Refresh'}
           </button>
           <button
             className="btn-primary"
@@ -1125,9 +1145,18 @@ export default function Dashboard() {
                             </span>
                           )}
                           {draft.status === 'approved' && (
-                            <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', background: 'rgba(16,185,129,0.1)', color: 'var(--success)' }}>
-                              ✓ Approved
-                            </span>
+                            <>
+                              <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', background: 'rgba(16,185,129,0.1)', color: 'var(--success)' }}>
+                                ✓ Approved
+                              </span>
+                              <button
+                                onClick={(e) => { e.stopPropagation(); cancelDraft(draft.id); }}
+                                style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.2)', cursor: 'pointer' }}
+                                title="Annuleer deze verzending"
+                              >
+                                ✕ Annuleer
+                              </button>
+                            </>
                           )}
                         </div>
                         {editingDraftId === draft.id ? (
