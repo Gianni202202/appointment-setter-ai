@@ -119,48 +119,74 @@ async function scanChats(targetCount: number, cursor: string | null) {
         const hoursAgo = (Date.now() - lastMsgTime) / (1000 * 60 * 60);
         const daysAgo = Math.floor(hoursAgo / 24);
 
-        // Score the chat — NO time filter, score everything
+        // === INTEREST SCORING ===
         let interestScore = 0;
         const interestReasons: string[] = [];
-
-        if (prospectSentLast) {
-          interestScore += 3;
-          interestReasons.push('Prospect wacht op antwoord');
-        }
-        if (hoursAgo < 24 && prospectSentLast) {
-          interestScore += 2;
-          interestReasons.push('Recent bericht (< 24u)');
-        }
-        if (hoursAgo >= 24 && hoursAgo < 72 && prospectSentLast) {
-          interestScore += 1;
-          interestReasons.push('Follow-up nodig');
-        }
         const prospectMsgs = messages.filter((m: any) => m.role === 'prospect');
-        if (prospectMsgs.some((m: any) => m.content.includes('?'))) {
-          interestScore += 1;
-          interestReasons.push('Prospect stelde een vraag');
-        }
+        const agentMsgs = messages.filter((m: any) => m.role === 'agent');
         const turns = messages.reduce((acc: number, _m: any, i: number) => {
           if (i > 0 && messages[i-1].role !== messages[i].role) return acc + 1;
           return acc;
         }, 0);
+
+        // === SCENARIO 1: Connectieverzoek geaccepteerd, nog geen follow-up ===
+        // Gianni stuurde connectie-note, prospect heeft nog niet gereageerd
+        // Dit is HEEL interessant — prospect heeft connectie geaccepteerd!
+        if (agentMsgs.length >= 1 && prospectMsgs.length === 0 && messages.length <= 2) {
+          interestScore += 4;
+          interestReasons.push('Connectie geaccepteerd — follow-up nodig');
+        }
+
+        // === SCENARIO 2: Prospect heeft gereageerd, wacht op antwoord ===
+        if (prospectSentLast) {
+          interestScore += 4;
+          interestReasons.push('Prospect wacht op antwoord');
+          if (hoursAgo < 24) {
+            interestScore += 2;
+            interestReasons.push('Recent (< 24u)');
+          } else if (hoursAgo < 72) {
+            interestScore += 1;
+            interestReasons.push('Follow-up nodig (1-3 dagen)');
+          }
+        }
+
+        // === SCENARIO 3: Gianni stuurde laatst, geen reactie ===
+        // Nog steeds interessant als het een lopend gesprek is
+        if (!prospectSentLast && turns >= 1) {
+          interestScore += 2;
+          interestReasons.push('Lopend gesprek — check status');
+          if (hoursAgo > 48 && hoursAgo < 240) {
+            interestScore += 1;
+            interestReasons.push('Geen reactie na 2+ dagen');
+          }
+        }
+
+        // === BONUS PUNTEN ===
+        // Prospect stelde een vraag
+        if (prospectMsgs.some((m: any) => m.content.includes('?'))) {
+          interestScore += 1;
+          interestReasons.push('Prospect stelde een vraag');
+        }
+
+        // Actief gesprek (meerdere beurten)
         if (turns >= 3) {
           interestScore += 1;
           interestReasons.push('Actief gesprek (' + turns + ' beurten)');
         }
-        if (!prospectSentLast && hoursAgo > 48 && turns >= 1) {
-          interestScore += 1;
-          interestReasons.push('Geen reactie na 2+ dagen');
-        }
+
+        // Uitgebreide prospect berichten
         const avgLen = prospectMsgs.reduce((s: number, m: any) => s + m.content.length, 0) / (prospectMsgs.length || 1);
-        if (avgLen > 100) {
+        if (avgLen > 100 && prospectMsgs.length > 0) {
           interestScore += 1;
           interestReasons.push('Uitgebreide berichten');
         }
 
-        // Determine status based on score
+        // === STATUS BEPALEN ===
+        // Threshold = 2 (bijna alles is interessant behalve dode gesprekken)
         let status = 'not_interesting';
-        let reason = 'Score te laag (' + interestScore + '/10)';
+        let reason = interestReasons.length > 0
+          ? interestReasons.join(', ') + ' (score: ' + interestScore + ')'
+          : 'Geen signalen gevonden';
         if (interestScore >= 2) {
           status = 'interesting';
           reason = interestReasons.join(', ');
