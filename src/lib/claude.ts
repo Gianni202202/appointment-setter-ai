@@ -561,17 +561,18 @@ Houd je verder aan alle andere regels.`;
   const data = await response.json();
   const rawContent = data.content[0]?.text || '{}';
 
-  // Extract JSON from Claude's response — it may be wrapped in markdown,
-  // have surrounding text, or be clean JSON
+  // === ROBUST JSON EXTRACTION ===
+  // Claude sometimes wraps JSON in markdown, adds commentary, or produces
+  // JSON with trailing commas / unescaped characters. We try multiple strategies.
   let content = rawContent.trim();
 
-  // Strip markdown code blocks
+  // Strategy 1: Strip markdown code blocks
   if (content.includes('```')) {
     const jsonBlock = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
     if (jsonBlock) content = jsonBlock[1].trim();
   }
 
-  // If it still doesn't start with {, try to find the JSON object
+  // Strategy 2: Find the outermost JSON object
   if (!content.startsWith('{')) {
     const jsonStart = content.indexOf('{');
     const jsonEnd = content.lastIndexOf('}');
@@ -580,34 +581,41 @@ Houd je verder aan alle andere regels.`;
     }
   }
 
-  try {
-    const parsed = JSON.parse(content) as ClaudeResponse;
+  // Strategy 3: Fix common JSON issues
+  // Remove trailing commas before } or ]
+  content = content.replace(/,\s*([}\]])/g, '$1');
+  // Fix unescaped newlines inside strings (common Claude mistake)
+  content = content.replace(/([^\\])\n/g, '$1\\n');
 
-    // If AI signals low confidence, always flag for human
-    if (parsed.confidence === 'low') {
-      parsed.needs_human = true;
-    }
+  // Try multiple parse attempts
+  function tryParse(str: string): any {
+    try { return JSON.parse(str); } catch { return null; }
+  }
 
-    // Run quality gate — if it fails, block auto-send
-    const qc = qualityCheckMessage(parsed.message);
-    if (!qc.passed) {
-      parsed.needs_human = true;
-      parsed.should_respond = false;
-      parsed.reasoning += ' [BLOCKED — QUALITY GATE: ' + qc.issues.join(', ') + ']';
-    }
+  let parsed = tryParse(content);
 
-    return parsed;
-  } catch (parseError) {
-    console.error('[Claude] JSON parse failed. Raw:', rawContent.substring(0, 300));
-    console.error('[Claude] Cleaned:', content.substring(0, 300));
-    console.error('[Claude] Error:', parseError);
-    // Fallback: try to extract the message field with regex even if full JSON fails
+  // Strategy 4: If parse failed, try to extract just the core fields
+  if (!parsed) {
+    // Try removing the extracted_facts field entirely (complex nested objects often break)
+    const withoutFacts = content.replace(/"extracted_facts"\s*:\s*\{[^}]*(?:\{[^}]*\}[^}]*)*\}/g, '"extracted_facts": null');
+    parsed = tryParse(withoutFacts);
+  }
+
+  // Strategy 5: Build from regex extraction
+  if (!parsed) {
+    console.warn('[Claude] All JSON parse strategies failed. Extracting fields via regex.');
+    console.warn('[Claude] Raw (first 500):', rawContent.substring(0, 500));
+    
     let extractedMessage = '';
-    let extractedReasoning = 'Failed to parse Claude response. Flagged for human review.';
+    let extractedReasoning = '';
 
+    // Multi-line message extraction: find "message": "..." handling escaped quotes
     const msgMatch = rawContent.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/);
     if (msgMatch) {
-      extractedMessage = msgMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+      extractedMessage = msgMatch[1]
+        .replace(/\\n/g, '\n')
+        .replace(/\\"/g, '"')
+        .replace(/\\t/g, ' ');
     }
 
     const reasonMatch = rawContent.match(/"reasoning"\s*:\s*"((?:[^"\\]|\\.)*)"/);
@@ -617,20 +625,59 @@ Houd je verder aan alle andere regels.`;
 
     const phaseMatch = rawContent.match(/"phase"\s*:\s*"([^"]*)"/);
     const sentimentMatch = rawContent.match(/"sentiment"\s*:\s*"([^"]*)"/);
+    const confidenceMatch = rawContent.match(/"confidence"\s*:\s*"([^"]*)"/);
+    const shouldRespondMatch = rawContent.match(/"should_respond"\s*:\s*(true|false)/);
 
-    // NEVER auto-send on parse failure, ALWAYS flag for human review
-    return {
-      reasoning: extractedReasoning,
-      message: extractedMessage || '[AI response could not be parsed — see reasoning]',
-      sentiment: (sentimentMatch?.[1] as 'positive' | 'neutral' | 'negative') || 'neutral',
-      has_objection: false,
-      objection_type: null,
-      meeting_mentioned: false,
-      not_interested: false,
-      should_respond: false,
-      needs_human: true,
-      phase: phaseMatch?.[1] || undefined,
-      confidence: 'low',
-    };
+    // If we found a message via regex, consider it a partial success
+    if (extractedMessage) {
+      parsed = {
+        reasoning: extractedReasoning || 'Parsed via fallback extraction.',
+        message: extractedMessage,
+        sentiment: sentimentMatch?.[1] || 'neutral',
+        has_objection: false,
+        objection_type: null,
+        meeting_mentioned: false,
+        not_interested: false,
+        should_respond: shouldRespondMatch ? shouldRespondMatch[1] === 'true' : true,
+        needs_human: true, // Always flag regex-extracted for review
+        phase: phaseMatch?.[1] || undefined,
+        confidence: confidenceMatch?.[1] || 'medium',
+      };
+    }
   }
+
+  if (parsed) {
+    const result = parsed as ClaudeResponse;
+
+    // If AI signals low confidence, always flag for human
+    if (result.confidence === 'low') {
+      result.needs_human = true;
+    }
+
+    // Run quality gate — if it fails, block auto-send
+    const qc = qualityCheckMessage(result.message);
+    if (!qc.passed) {
+      result.needs_human = true;
+      result.should_respond = false;
+      result.reasoning += ' [BLOCKED — QUALITY GATE: ' + qc.issues.join(', ') + ']';
+    }
+
+    return result;
+  }
+
+  // Complete failure — return error message
+  console.error('[Claude] COMPLETE parse failure. Raw:', rawContent.substring(0, 500));
+  return {
+    reasoning: 'Complete parse failure. Raw response logged server-side.',
+    message: '[AI kon geen antwoord genereren voor dit gesprek. Klik op Regenerate om opnieuw te proberen.]',
+    sentiment: 'neutral' as const,
+    has_objection: false,
+    objection_type: null,
+    meeting_mentioned: false,
+    not_interested: false,
+    should_respond: false,
+    needs_human: true,
+    phase: undefined,
+    confidence: 'low',
+  };
 }

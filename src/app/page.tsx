@@ -227,19 +227,22 @@ export default function Dashboard() {
 
   async function generateDraftsForSelected() {
     if (selectedChatIds.size === 0) { showToast('Select at least one chat', 'error'); return; }
+    const chatIds = Array.from(selectedChatIds);
     setGenerating(true);
-    setGeneratingProgress(`⏳ Generating drafts for ${selectedChatIds.size} chat${selectedChatIds.size > 1 ? 's' : ''}... This may take 30-60 seconds.`);
-    try {
-      const res = await fetch('/api/agent/copilot-scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_ids: Array.from(selectedChatIds) }),
-      });
+    setGeneratingProgress(`⏳ Generating drafts for ${chatIds.length} chat${chatIds.length > 1 ? 's' : ''}... working in background.`);
+    setSelectedChatIds(new Set());
+    showToast(`🤖 Generating ${chatIds.length} draft${chatIds.length > 1 ? 's' : ''} in background — you can navigate away safely`, 'success');
+
+    // Fire-and-forget: the server processes all chats regardless of browser state
+    // We use a global promise that persists even if component unmounts
+    const generatePromise = fetch('/api/agent/copilot-scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_ids: chatIds }),
+    }).then(async (res) => {
       if (res.ok) {
         const data = await res.json();
-        showToast(data.drafts_created > 0 ? `✓ Created ${data.drafts_created} drafts — scroll down to Step 2 to review` : `⚠️ Processed ${data.processed} chats but no drafts generated. Try different chats.`, data.drafts_created > 0 ? 'success' : 'error');
-        setSelectedChatIds(new Set());
-        // Refresh only the draft queue (not the full page)
+        // If we're still on the page, update UI
         try {
           const qRes = await fetch('/api/agent/queue');
           if (qRes.ok) {
@@ -248,13 +251,21 @@ export default function Dashboard() {
             setSentToday(q.sent_today || 0);
           }
         } catch {}
-        // Don't reload chats — they're still visible for re-selection
+        setGenerating(false);
+        setGeneratingProgress('');
+        showToast(data.drafts_created > 0 ? `✓ Created ${data.drafts_created} draft${data.drafts_created > 1 ? 's' : ''} — check Step 2` : '⚠️ No drafts could be generated', data.drafts_created > 0 ? 'success' : 'error');
       } else {
-        const err = await res.json();
-        showToast('✕ ' + (err.error || 'Generation failed'), 'error');
+        setGenerating(false);
+        setGeneratingProgress('');
+        showToast('✕ Generation failed', 'error');
       }
-    } catch (err) { showToast('✕ Error: ' + err, 'error'); }
-    finally { setGenerating(false); setGeneratingProgress(''); }
+    }).catch(() => {
+      setGenerating(false);
+      setGeneratingProgress('');
+    });
+
+    // Store promise globally so it survives component unmount
+    (window as any).__draftGeneration = generatePromise;
   }
 
   async function toggleConversation(draftId: string, chatId: string) {
