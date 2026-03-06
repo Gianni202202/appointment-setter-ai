@@ -18,21 +18,22 @@ let linkedInAccount: {
 
 const defaultConfig: AgentConfig = {
   icp: {
-    industries: ['SaaS', 'Technology', 'E-commerce', 'Marketing'],
-    roles: ['CEO', 'Founder', 'CTO', 'Head of Sales', 'VP Marketing', 'Director'],
-    company_size_min: 10,
-    company_size_max: 500,
-    keywords: ['growth', 'scaling', 'automation', 'leads', 'pipeline'],
-    description: 'B2B SaaS founders and executives looking to scale their outbound sales',
+    industries: ['Recruitment', 'Staffing', 'Detachering', 'Executive Search', 'HR Tech'],
+    roles: ['Recruiter', 'Recruitment Manager', 'Talent Acquisition', 'Founder', 'Director', 'Head of Recruitment', 'Managing Partner'],
+    company_size_min: 5,
+    company_size_max: 250,
+    keywords: ['outbound', 'sourcing', 'candidates', 'recruitment', 'hiring', 'outreach', 'personalisatie'],
+    description: 'Recruitment bureaus en inhouse recruitment teams die actief outbound doen en hun berichten willen personaliseren op schaal, zonder dat het generiek wordt.',
   },
   tone: {
-    style: 'professional',
+    style: 'casual',
     language: 'nl',
-    max_message_length: 500,
+    max_message_length: 300,
     first_person_name: 'Gianni',
     example_messages: [
-      'Hey [naam], zag je post over [onderwerp]. Interessante kijk. Hoe gaan jullie om met [relevant probleem]?',
-      'Bedankt voor de connectie! Viel me op dat jullie flink aan het groeien zijn. Herkenbaar — welke uitdaging speelt het meest op dit moment?',
+      'Ha, zag dat jullie flink aan het groeien zijn met het team. Herkenbaar. Hoe pakken jullie outbound nu aan?',
+      'Nice, snap ik. Hoeveel berichten sturen jullie ongeveer per week? Puur even benieuwd of het volume groot genoeg is.',
+      'Logisch. De meeste bureaus die ik spreek worstelen met datzelfde — veel tijd kwijt aan personaliseren maar generiek werkt niet. Hoe lossen jullie dat nu op?',
     ],
   },
   rules: {
@@ -43,8 +44,8 @@ const defaultConfig: AgentConfig = {
     auto_respond: false,
     working_hours_start: 9,
     working_hours_end: 18,
-    goal: 'Book a 30-minute discovery call to discuss how we can help them scale their business',
-    offer_description: 'We help B2B companies automate and scale their outbound sales pipeline using AI-powered conversation management.',
+    goal: 'Prospect warm maken via natuurlijke DM-gesprekken, richting een korte Loom-video en dan een 10 min sparcall om te kijken of Elvatix past.',
+    offer_description: 'Elvatix zet outreach berichten op schaal klaar op basis van je eigen template en tone of voice. Jij checkt, tweakt en verstuurt — bulk zonder copy paste, maar wel persoonlijk.',
   },
   blacklist: [],
 };

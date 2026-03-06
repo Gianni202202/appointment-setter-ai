@@ -242,33 +242,47 @@ export default function Dashboard() {
     setScanProgress('🔍 Scanning starten...');
     setScanStats(null);
 
-    // Process in batches for progress visibility
-    const batchSize = 15;
-    const totalBatches = Math.ceil(scanLimit / batchSize);
     let allSuggestions: any[] = [];
     let totalScanned = 0;
+    let totalFetched = 0;
+    let cursor: string | null = null;
+    const batchSize = 25; // Fetch 25 chats per API call
+    const maxBatches = Math.ceil(scanLimit / batchSize);
 
     const scanPromise = (async () => {
       try {
-        for (let batch = 0; batch < totalBatches; batch++) {
-          const offset = batch * batchSize;
-          const limit = Math.min(batchSize, scanLimit - offset);
-          setScanProgress('🔍 Scanning chat ' + (offset + 1) + '-' + (offset + limit) + ' van ' + scanLimit + '...');
+        for (let batch = 0; batch < maxBatches; batch++) {
+          const remaining = scanLimit - totalFetched;
+          if (remaining <= 0) break;
 
-          const res = await fetch('/api/agent/copilot-autoscan', {
+          setScanProgress('🔍 Chat ' + (totalFetched + 1) + '-' + Math.min(totalFetched + batchSize, scanLimit) + ' van ' + scanLimit + ' ophalen...');
+
+          const res: Response = await fetch('/api/agent/copilot-autoscan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ offset, limit, max_suggestions: 10 }),
+            body: JSON.stringify({
+              target_count: Math.min(batchSize, remaining),
+              max_suggestions: 10 - allSuggestions.length,
+              cursor: cursor,
+            }),
           });
 
           if (res.ok) {
             const data = await res.json();
             totalScanned += data.total_chats_scanned || 0;
+            totalFetched += data.total_chats_fetched || 0;
+            cursor = data.next_cursor || null;
+
             if (data.suggestions && data.suggestions.length > 0) {
               allSuggestions = [...allSuggestions, ...data.suggestions];
               setAutoScanResults([...allSuggestions]);
             }
             setScanStats({ scanned: totalScanned, found: allSuggestions.length });
+
+            // Stop if no more pages or enough suggestions
+            if (!cursor || allSuggestions.length >= 10) break;
+          } else {
+            break;
           }
         }
 
