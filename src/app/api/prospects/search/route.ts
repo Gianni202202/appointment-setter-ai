@@ -22,10 +22,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { url, keywords, maxResults = 25 } = body;
     
-    console.log('[Prospects Search] Received request:', { url: url?.substring(0, 80), keywords, maxResults });
-    console.log('[Prospects Search] UNIPILE_DSN set:', !!process.env.UNIPILE_DSN);
-    console.log('[Prospects Search] UNIPILE_API_KEY set:', !!process.env.UNIPILE_API_KEY);
-    console.log('[Prospects Search] UNIPILE_ACCOUNT_ID set:', !!process.env.UNIPILE_ACCOUNT_ID);
+    console.log('[Prospects Search] Request:', { url: url?.substring(0, 80), keywords, maxResults });
+    console.log('[Prospects Search] ENV check — DSN:', !!process.env.UNIPILE_DSN, 'KEY:', !!process.env.UNIPILE_API_KEY, 'ACCOUNT:', !!process.env.UNIPILE_ACCOUNT_ID);
 
     if (!url && !keywords) {
       return NextResponse.json({ error: 'Provide url or keywords' }, { status: 400, headers: corsHeaders });
@@ -34,46 +32,30 @@ export async function POST(request: NextRequest) {
     if (!process.env.UNIPILE_DSN || !process.env.UNIPILE_API_KEY || !process.env.UNIPILE_ACCOUNT_ID) {
       return NextResponse.json({ 
         error: 'Unipile not configured',
-        details: {
-          dsn: !!process.env.UNIPILE_DSN,
-          apiKey: !!process.env.UNIPILE_API_KEY,
-          accountId: !!process.env.UNIPILE_ACCOUNT_ID,
-        }
+        details: { dsn: !!process.env.UNIPILE_DSN, apiKey: !!process.env.UNIPILE_API_KEY, accountId: !!process.env.UNIPILE_ACCOUNT_ID }
       }, { status: 500, headers: corsHeaders });
     }
 
-    // Check daily limit
     let searchesToday = 0;
-    try {
-      searchesToday = await getSearchesToday();
-    } catch (e: any) {
-      console.log('[Prospects Search] getSearchesToday failed (non-critical):', e.message);
-    }
+    try { searchesToday = await getSearchesToday(); } catch {}
     
     if (searchesToday >= MAX_PROFILES_PER_DAY) {
       return NextResponse.json({ 
-        error: `Daily search limit reached (${searchesToday}/${MAX_PROFILES_PER_DAY}). Try again tomorrow.` 
+        error: 'Daily search limit reached (' + searchesToday + '/' + MAX_PROFILES_PER_DAY + '). Try again tomorrow.' 
       }, { status: 429, headers: corsHeaders });
     }
     
     const remaining = Math.min(maxResults, MAX_PROFILES_PER_DAY - searchesToday);
     
-    console.log('[Prospects Search] Calling Unipile searchLinkedIn...');
-    
-    // First page
+    console.log('[Prospects Search] Calling Unipile...');
     const results = await searchLinkedIn({ url, keywords });
     
-    console.log('[Prospects Search] Got results:', { 
-      itemCount: results.items?.length || 0, 
-      total: results.paging?.total_count,
-      hasCursor: !!results.cursor 
-    });
+    console.log('[Prospects Search] Got', results.items?.length || 0, 'items');
     
     const allItems = [...(results.items || []).slice(0, remaining)];
     let cursor = results.cursor;
     let pagesLoaded = 1;
     
-    // Paginate if needed (with delays!)
     while (cursor && allItems.length < remaining && pagesLoaded < 10) {
       await new Promise(r => setTimeout(r, 10000 + Math.random() * 5000));
       const nextPage = await searchLinkedIn({ url, cursor });
@@ -82,13 +64,23 @@ export async function POST(request: NextRequest) {
       pagesLoaded++;
     }
     
-    // Convert to prospects and save
-    const prospectData = allItems.map(item => 
-      searchResultToProspect(item, 'sales_navigator', url || keywords)
-    );
+    // Convert to prospects — detect already-invited and already-connected from search results!
+    const prospectData = allItems.map(item => {
+      const prospect = searchResultToProspect(item, 'sales_navigator', url || keywords);
+      
+      // Unipile search results include these fields:
+      // - network_distance: "DISTANCE_1" = already connected
+      // - pending_invitation: true = invite already sent
+      if (item.network_distance === 'DISTANCE_1') {
+        (prospect as any)._autoStatus = 'connected';
+      } else if (item.pending_invitation) {
+        (prospect as any)._autoStatus = 'invite_sent';
+      }
+      
+      return prospect;
+    });
     
-    const { added, skipped } = await addProspectsBulk(prospectData);
-    
+    const { added, skipped, alreadyConnected, alreadyInvited } = await addProspectsBulk(prospectData);
     try { await incrementSearchCount(allItems.length); } catch {}
     
     return NextResponse.json({
@@ -97,6 +89,8 @@ export async function POST(request: NextRequest) {
       fetched: allItems.length,
       added,
       skipped,
+      already_connected: alreadyConnected || 0,
+      already_invited: alreadyInvited || 0,
       pages_loaded: pagesLoaded,
       has_more: !!cursor,
     }, { headers: corsHeaders });

@@ -84,7 +84,11 @@ export default function ProspectsPage() {
       });
       const data = await res.json();
       if (data.error) { alert(data.error); return; }
-      setProcessStatus('✅ ' + data.added + ' prospects imported (' + data.skipped + ' duplicates skipped)');
+      const parts = ['✅ ' + data.added + ' prospects imported'];
+      if (data.skipped > 0) parts.push(data.skipped + ' duplicates skipped');
+      if (data.already_connected > 0) parts.push('🤝 ' + data.already_connected + ' already connected');
+      if (data.already_invited > 0) parts.push('📨 ' + data.already_invited + ' already invited');
+      setProcessStatus(parts.join(' · '));
       setSearchUrl('');
       loadProspects();
     } catch (e: any) {
@@ -96,7 +100,7 @@ export default function ProspectsPage() {
 
   // ── Enrich + Generate Messages ──
   const handleEnrich = async () => {
-    if (!instruction.trim()) { alert('Geef eerst een instructie op voor het connectieverzoek'); return; }
+    // Instruction is optional — backend uses default if empty
     const ids = selected.size > 0 ? Array.from(selected) : undefined;
     setProcessing(true);
     setProcessStatus('⏳ Enriching profiles & generating messages (8-20s per prospect)...');
@@ -242,7 +246,7 @@ export default function ProspectsPage() {
           ✨ Enrich & Generate Messages
         </h3>
         <textarea
-          placeholder="Instructie voor het connectieverzoek, bijv: 'Ik ben op zoek naar partnerships in de tech sector. Refereer aan hun huidige rol en bedrijf.'"
+          placeholder="(Optioneel) Instructie voor berichten, bijv: 'Ik zoek partnerships in tech. Refereer aan hun rol en bedrijf.'"
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
           rows={3}
@@ -255,7 +259,7 @@ export default function ProspectsPage() {
         <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
           <button
             onClick={handleEnrich}
-            disabled={processing || !instruction.trim()}
+            disabled={processing}
             style={{
               padding: '10px 20px', borderRadius: '8px', border: 'none', cursor: 'pointer',
               background: 'linear-gradient(135deg, #818cf8, #6366f1)', color: 'white',

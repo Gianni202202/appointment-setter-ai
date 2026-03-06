@@ -605,21 +605,39 @@ export async function addProspect(prospect: Omit<Prospect, 'id' | 'status' | 'en
   return newProspect;
 }
 
-export async function addProspectsBulk(prospects: Omit<Prospect, 'id' | 'status' | 'enriched' | 'imported_at' | 'updated_at'>[]): Promise<{ added: number; skipped: number }> {
+export async function addProspectsBulk(prospects: Omit<Prospect, 'id' | 'status' | 'enriched' | 'imported_at' | 'updated_at'>[]): Promise<{ added: number; skipped: number; alreadyConnected: number; alreadyInvited: number }> {
   const all = await rGet<Prospect[]>('prospect:list', []);
   const existingIds = new Set(all.map(p => p.provider_id));
   let added = 0;
   let skipped = 0;
+  let alreadyConnected = 0;
+  let alreadyInvited = 0;
   
   for (const prospect of prospects) {
     if (existingIds.has(prospect.provider_id)) {
       skipped++;
       continue;
     }
+    
+    // Detect status from search results (set by searchResultToProspect)
+    const autoStatus = (prospect as any)._autoStatus;
+    let status: ProspectStatus = 'imported';
+    if (autoStatus === 'connected') {
+      status = 'connected';
+      alreadyConnected++;
+    } else if (autoStatus === 'invite_sent') {
+      status = 'invite_sent';
+      alreadyInvited++;
+    }
+    
+    // Remove internal field
+    const cleanProspect = { ...prospect };
+    delete (cleanProspect as any)._autoStatus;
+    
     all.push({
-      ...prospect,
+      ...cleanProspect,
       id: 'prsp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
-      status: 'imported',
+      status,
       enriched: false,
       imported_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -629,7 +647,7 @@ export async function addProspectsBulk(prospects: Omit<Prospect, 'id' | 'status'
   }
   
   await rSet('prospect:list', all);
-  return { added, skipped };
+  return { added, skipped, alreadyConnected, alreadyInvited };
 }
 
 export async function updateProspect(id: string, updates: Partial<Prospect>): Promise<Prospect | null> {
