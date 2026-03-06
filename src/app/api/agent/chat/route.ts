@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import {
   getAgentMode, getAgentModeAsync, setAgentMode,
   getAgentChatHistory, addAgentChatMessage,
-  getAgentScanSettings, updateAgentScanSettings,
-  getDrafts, getDraft, updateDraft, removeDraft, addDraft, getSentTodayCount,
+  getAgentScanSettings, getAgentScanSettingsAsync, updateAgentScanSettings,
+  getDrafts, getDraft, updateDraft, removeDraft, removeDraftsBulk, addDraft, getSentTodayCount,
   getConfig, getConfigAsync, updateConfig,
   logActivity,
 } from '@/lib/database';
@@ -133,7 +133,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'message is required' }, { status: 400 });
     }
 
-    addAgentChatMessage({
+    await addAgentChatMessage({
       role: 'user',
       content: message,
       timestamp: new Date().toISOString(),
@@ -145,7 +145,7 @@ export async function POST(request: Request) {
     const approvedDrafts = drafts.filter(d => d.status === 'approved');
     const sentToday = await getSentTodayCount();
     const dailyCap = getDailyCapacity(0);
-    const scanSettings = getAgentScanSettings();
+    const scanSettings = await getAgentScanSettingsAsync();
     const chatHistory = getAgentChatHistory().slice(-10);
     const config = await getConfigAsync();
 
@@ -224,7 +224,7 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
         message: `Ik begrijp je verzoek, maar de GEMINI_API_KEY is niet geconfigureerd. Status: mode=${mode}, ${pendingDrafts.length} pending drafts.`,
         actions: [] as any[],
       };
-      addAgentChatMessage({ role: 'agent', content: fallbackResponse.message, timestamp: new Date().toISOString(), actions: [] });
+      await addAgentChatMessage({ role: 'agent', content: fallbackResponse.message, timestamp: new Date().toISOString(), actions: [] });
       return NextResponse.json(fallbackResponse);
     }
 
@@ -248,7 +248,7 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
       const errText = await apiRes.text();
       console.error('[Agent Chat] Gemini API error:', apiRes.status, errText);
       const errorMsg = `Er ging iets mis met de AI (status ${apiRes.status}). Probeer het opnieuw.`;
-      addAgentChatMessage({ role: 'agent', content: errorMsg, timestamp: new Date().toISOString() });
+      await addAgentChatMessage({ role: 'agent', content: errorMsg, timestamp: new Date().toISOString() });
       return NextResponse.json({ message: errorMsg, actions: [], mode });
     }
 
@@ -291,7 +291,7 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
           case 'CHANGE_MODE': {
             const newMode = action.params?.mode;
             if (['off', 'copilot', 'auto'].includes(newMode)) {
-              setAgentMode(newMode);
+              await setAgentMode(newMode);
               actionResults.push({ type: 'CHANGE_MODE', result: `Mode changed to ${newMode}` });
             }
             break;
@@ -339,7 +339,7 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
             if (action.params?.phases !== undefined) updates.phases = action.params.phases;
             if (action.params?.limit !== undefined) updates.limit = action.params.limit;
             if (action.params?.autoSend !== undefined) updates.autoSend = action.params.autoSend;
-            updateAgentScanSettings(updates);
+            await updateAgentScanSettings(updates);
             actionResults.push({ type: 'UPDATE_SCAN_SETTINGS', result: JSON.stringify(updates) });
             break;
           }
@@ -470,15 +470,11 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
               break;
             }
 
-            // STEP 2: Remove ALL old drafts for chats being processed (instant Redis ops)
-            let draftsRemoved = 0;
-            for (const chatId of chatIdsToProcess) {
-              const oldDrafts = pendingDrafts.filter(d => d.chat_id === chatId);
-              for (const old of oldDrafts) {
-                await removeDraft(old.id);
-                draftsRemoved++;
-              }
-            }
+            // STEP 2: Remove ALL old drafts for chats being processed (single Redis op)
+            const oldDraftIds = chatIdsToProcess.flatMap(chatId =>
+              pendingDrafts.filter(d => d.chat_id === chatId).map(d => d.id)
+            );
+            const draftsRemoved = await removeDraftsBulk(oldDraftIds);
             if (draftsRemoved > 0) {
               actionResults.push({ type: 'GENERATE_DRAFTS', result: `${draftsRemoved} oude drafts verwijderd` });
             }
@@ -523,7 +519,7 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
       }
     }
 
-    addAgentChatMessage({
+    await addAgentChatMessage({
       role: 'agent',
       content: parsed.message,
       timestamp: new Date().toISOString(),
@@ -538,7 +534,7 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
   } catch (error: any) {
     console.error('[Agent Chat] Error:', error?.message || error, error?.stack || '');
     const errorMsg = 'Er ging iets mis met de AI. Probeer het opnieuw.';
-    addAgentChatMessage({ role: 'agent', content: errorMsg + ' (Error: ' + String(error?.message || error) + ')', timestamp: new Date().toISOString() });
+    await addAgentChatMessage({ role: 'agent', content: errorMsg + ' (Error: ' + String(error?.message || error) + ')', timestamp: new Date().toISOString() });
     return NextResponse.json({ message: errorMsg, actions: [], error: String(error?.message || error) }, { status: 200 });
   }
 }

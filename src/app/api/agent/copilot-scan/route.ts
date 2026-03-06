@@ -146,9 +146,9 @@ export async function POST(request: Request) {
         );
 
         // 5. Store phase & memory
-        if (aiResponse.phase) setConversationPhase(chatId, aiResponse.phase);
+        if (aiResponse.phase) await setConversationPhase(chatId, aiResponse.phase);
         if (aiResponse.message) {
-          addPreviousOpener(chatId, aiResponse.message.split('\n')[0].substring(0, 60));
+          await addPreviousOpener(chatId, aiResponse.message.split('\n')[0].substring(0, 60));
         }
 
         // 6. ALWAYS add to draft queue — user decides what to send, not the AI

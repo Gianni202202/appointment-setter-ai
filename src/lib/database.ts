@@ -98,14 +98,14 @@ let linkedInAccount: { account_id: string; name: string; connected_at: string; }
 
 export function getLinkedInAccount() { return linkedInAccount; }
 
-export function setLinkedInAccount(data: { account_id: string; name: string }) {
+export async function setLinkedInAccount(data: { account_id: string; name: string }) {
   linkedInAccount = { ...data, connected_at: new Date().toISOString() };
-  rSet('linkedin:account', linkedInAccount);
+  await rSet('linkedin:account', linkedInAccount);
 }
 
-export function disconnectLinkedIn() {
+export async function disconnectLinkedIn() {
   linkedInAccount = null;
-  rSet('linkedin:account', null);
+  await rSet('linkedin:account', null);
 }
 
 // ============================================
@@ -227,9 +227,9 @@ export async function getAgentModeAsync(): Promise<AgentMode> {
   agentMode = await rGet<AgentMode>('agent:mode', 'off');
   return agentMode;
 }
-export function setAgentMode(mode: AgentMode) {
+export async function setAgentMode(mode: AgentMode) {
   agentMode = mode;
-  rSet('agent:mode', mode);
+  await rSet('agent:mode', mode);
   console.log('[Agent] Mode set to:', mode);
 }
 
@@ -298,6 +298,18 @@ export async function removeDraft(id: string): Promise<boolean> {
   return true;
 }
 
+export async function removeDraftsBulk(ids: string[]): Promise<number> {
+  if (ids.length === 0) return 0;
+  const queue = await rGet<DraftMessage[]>('draft:queue', []);
+  const idSet = new Set(ids);
+  const filtered = queue.filter(d => !idSet.has(d.id));
+  const removed = queue.length - filtered.length;
+  if (removed > 0) {
+    await rSet('draft:queue', filtered);
+  }
+  return removed;
+}
+
 export async function getSentTodayCount(): Promise<number> {
   const today = new Date().toISOString().split('T')[0];
   const queue = await rGet<DraftMessage[]>('draft:queue', []);
@@ -333,7 +345,7 @@ export async function getConversationMemoryAsync(chatId: string): Promise<Conver
   return conversationMemories.get(chatId);
 }
 
-export function updateConversationMemory(chatId: string, updates: Partial<ConversationMemory['facts']>) {
+export async function updateConversationMemory(chatId: string, updates: Partial<ConversationMemory['facts']>) {
   const existing = conversationMemories.get(chatId);
   if (existing) {
     existing.facts = { ...existing.facts, ...updates };
@@ -344,10 +356,10 @@ export function updateConversationMemory(chatId: string, updates: Partial<Conver
       updated_at: new Date().toISOString(),
     });
   }
-  rSet('conv:memories', Object.fromEntries(conversationMemories));
+  await rSet('conv:memories', Object.fromEntries(conversationMemories));
 }
 
-export function addPreviousOpener(chatId: string, opener: string) {
+export async function addPreviousOpener(chatId: string, opener: string) {
   const mem = conversationMemories.get(chatId);
   if (mem) {
     mem.previous_openers.push(opener);
@@ -358,7 +370,7 @@ export function addPreviousOpener(chatId: string, opener: string) {
       updated_at: new Date().toISOString(),
     });
   }
-  rSet('conv:memories', Object.fromEntries(conversationMemories));
+  await rSet('conv:memories', Object.fromEntries(conversationMemories));
 }
 
 export function getPreviousOpeners(chatId: string): string[] {
@@ -391,9 +403,9 @@ export async function getConversationPhaseAsync(chatId: string): Promise<string 
   return conversationPhases.get(chatId);
 }
 
-export function setConversationPhase(chatId: string, phase: string) {
+export async function setConversationPhase(chatId: string, phase: string) {
   conversationPhases.set(chatId, phase);
-  rSet('conv:phases', Object.fromEntries(conversationPhases));
+  await rSet('conv:phases', Object.fromEntries(conversationPhases));
 }
 
 // ============================================
@@ -406,9 +418,9 @@ export async function getAccountActivatedAtAsync(): Promise<string | null> {
   accountActivatedAt = await rGet<string | null>('account:activated_at', null);
   return accountActivatedAt;
 }
-export function setAccountActivatedAt(date?: string) {
+export async function setAccountActivatedAt(date?: string) {
   accountActivatedAt = date || new Date().toISOString();
-  rSet('account:activated_at', accountActivatedAt);
+  await rSet('account:activated_at', accountActivatedAt);
 }
 export function getAccountAgeWeeks(): number {
   if (!accountActivatedAt) return 99;
@@ -433,16 +445,21 @@ export async function getAgentChatHistoryAsync() {
   if (stored.length > 0 && agentChatHistory.length === 0) agentChatHistory = stored;
   return agentChatHistory.slice(-30);
 }
-export function addAgentChatMessage(msg: AgentChatMessage) {
+export async function addAgentChatMessage(msg: AgentChatMessage) {
   agentChatHistory.push(msg);
   if (agentChatHistory.length > 50) agentChatHistory = agentChatHistory.slice(-30);
-  rSet('agent:chatHistory', agentChatHistory);
+  await rSet('agent:chatHistory', agentChatHistory);
 }
 export function clearAgentChatHistory() { agentChatHistory = []; }
 export function getAgentScanSettings() { return { ...agentScanSettings }; }
-export function updateAgentScanSettings(updates: Partial<typeof agentScanSettings>) {
+export async function getAgentScanSettingsAsync() {
+  const stored = await rGet<typeof agentScanSettings | null>('agent:scanSettings', null);
+  if (stored) agentScanSettings = stored;
+  return { ...agentScanSettings };
+}
+export async function updateAgentScanSettings(updates: Partial<typeof agentScanSettings>) {
   agentScanSettings = { ...agentScanSettings, ...updates };
-  rSet('agent:scanSettings', agentScanSettings);
+  await rSet('agent:scanSettings', agentScanSettings);
 }
 
 // ============================================

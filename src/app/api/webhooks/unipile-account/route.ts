@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     const name = body.name || body.identifier || 'LinkedIn Account';
 
     if (accountId) {
-      setLinkedInAccount({ account_id: accountId, name });
+      await setLinkedInAccount({ account_id: accountId, name });
       console.log(`[Unipile Account] LinkedIn connected: ${name} (${accountId})`);
     }
 
