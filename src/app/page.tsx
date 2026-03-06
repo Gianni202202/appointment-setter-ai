@@ -59,13 +59,27 @@ export default function Dashboard() {
   // Load everything on mount
   const loadAll = useCallback(async () => {
     try {
-      const [modeRes, statusRes, queueRes] = await Promise.all([
-        fetch('/api/agent/mode'),
+      // Read mode from localStorage (Vercel serverless instances don't share memory)
+      const savedMode = typeof window !== 'undefined' ? localStorage.getItem('agent-mode') : null;
+      if (savedMode && ['off', 'copilot', 'auto'].includes(savedMode)) {
+        setMode(savedMode as AgentMode);
+      }
+
+      const [statusRes, queueRes] = await Promise.all([
         fetch('/api/unipile/status'),
         fetch('/api/agent/queue'),
       ]);
-      if (modeRes.ok) { const d = await modeRes.json(); setMode(d.mode || 'off'); }
       if (statusRes.ok) { const d = await statusRes.json(); setLinkedInConnected(d.connected || false); }
+
+      // Also sync mode to API in background (fire and forget)
+      if (savedMode && savedMode !== 'off') {
+        fetch('/api/agent/mode', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ mode: savedMode }),
+        }).catch(() => {});
+      }
+
       if (queueRes.ok) {
         const q = await queueRes.json();
         setDrafts(q.drafts || []);
@@ -120,19 +134,24 @@ export default function Dashboard() {
       );
       if (!ok) return;
     }
+
+    // Save to localStorage IMMEDIATELY (survives Vercel instance resets)
+    localStorage.setItem('agent-mode', newMode);
+    setMode(newMode);
+    window.dispatchEvent(new CustomEvent('agent-mode-changed', { detail: newMode }));
+
+    // Sync to API in background
     try {
-      const res = await fetch('/api/agent/mode', {
+      await fetch('/api/agent/mode', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: newMode }),
       });
-      if (res.ok) {
-        const d = await res.json();
-        setMode(d.mode);
-        window.dispatchEvent(new CustomEvent('agent-mode-changed', { detail: d.mode }));
-        if (d.mode === 'copilot') showToast('Copilot mode activated — select chats to generate drafts', 'success');
-      }
-    } catch (err) { showToast('Mode change failed: ' + err, 'error'); }
+    } catch (err) { console.error('Mode sync to API failed:', err); }
+
+    if (newMode === 'copilot') showToast('🤖 Copilot mode activated — select chats to generate drafts', 'success');
+    else if (newMode === 'auto') showToast('🚀 Auto mode activated — agent is working autonomously', 'success');
+    else showToast('Agent turned off', 'info');
   }
 
   function toggleChatSelection(chatId: string) {
@@ -646,7 +665,7 @@ export default function Dashboard() {
 
       {/* Agent Chat Interface */}
       <AgentChat
-        onModeChange={(m) => { setMode(m as AgentMode); }}
+        onModeChange={(m) => { setMode(m as AgentMode); localStorage.setItem('agent-mode', m); }}
         onRefreshDashboard={loadAll}
       />
     </>

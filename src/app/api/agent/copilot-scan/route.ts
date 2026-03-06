@@ -176,17 +176,18 @@ export async function POST(request: Request) {
  * GET — List all chats that need attention (last message from prospect).
  * Robust: checks multiple Unipile field formats for sender detection.
  */
-export async function GET(request: Request) {
+/**
+ * GET — List ALL chats from LinkedIn for copilot selection.
+ * Uses the same Unipile API as conversations page (which works).
+ * Marks which chats have the prospect's last message vs ours.
+ */
+export async function GET() {
   try {
     if (!DSN || !API_KEY || !ACCOUNT_ID) {
-      return NextResponse.json({ error: 'Unipile not configured' }, { status: 400 });
+      return NextResponse.json({ error: 'Unipile not configured', needs_attention: [], total_scanned: 0 }, { status: 400 });
     }
 
-    const { searchParams } = new URL(request.url);
-    const maxAgeDays = parseInt(searchParams.get('max_age_days') || '30');
-    const cutoffDate = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
-
-    // Fetch chats with higher limit (matching conversations route)
+    // Fetch ALL chats (same approach as /api/conversations which works)
     const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=250`, {
       headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
       cache: 'no-store',
@@ -194,24 +195,28 @@ export async function GET(request: Request) {
 
     if (!chatsRes.ok) {
       const errText = await chatsRes.text();
-      console.error('[Copilot Scan GET] Unipile error:', errText);
-      return NextResponse.json({ error: 'Failed to fetch chats from LinkedIn' }, { status: 500 });
+      console.error('[Copilot Scan GET] Unipile error:', chatsRes.status, errText);
+      return NextResponse.json({ error: 'Failed to fetch from LinkedIn', needs_attention: [], total_scanned: 0 }, { status: 500 });
     }
 
     const chatsData = await chatsRes.json();
     const chats = chatsData.items || chatsData || [];
+    console.log('[Copilot Scan GET] Fetched', chats.length, 'chats from Unipile');
 
     const existingDraftChatIds = new Set(
       getDrafts().filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
     );
 
     const needsAttention: any[] = [];
-    const alreadyHasDraft: any[] = [];
 
     for (const chat of chats) {
+      // Skip chats from other accounts
       if (chat.account_id && chat.account_id !== ACCOUNT_ID) continue;
+      
+      // Skip chats that already have drafts
+      if (existingDraftChatIds.has(chat.id)) continue;
 
-      // Extract prospect name from attendees
+      // Extract prospect name
       let prospectName = 'LinkedIn Contact';
       if (chat.attendees && Array.isArray(chat.attendees)) {
         for (const a of chat.attendees) {
@@ -220,55 +225,51 @@ export async function GET(request: Request) {
           break;
         }
       }
-      if (prospectName === 'LinkedIn Contact' && chat.name) {
-        prospectName = chat.name;
+      if (prospectName === 'LinkedIn Contact') {
+        prospectName = chat.name || chat.title || prospectName;
       }
 
+      // Get last message info
       const lastMsg = chat.last_message;
-      const msgDate = lastMsg?.timestamp ? new Date(lastMsg.timestamp) : 
-                      chat.last_message_at ? new Date(chat.last_message_at) :
-                      chat.updated_at ? new Date(chat.updated_at) : null;
+      const lastMessageText = lastMsg?.text || '';
+      const lastMessageAt = lastMsg?.timestamp || chat.last_message_at || chat.updated_at || '';
+      
+      // Skip empty chats
+      if (!lastMessageText && !lastMessageAt) continue;
 
-      // Skip chats older than cutoff
-      if (msgDate && msgDate < cutoffDate) continue;
-
-      // Robust sender check: try multiple Unipile field formats
+      // Determine if last message is from prospect (try multiple Unipile formats)
       const isSentByMe = lastMsg ? (
         lastMsg.is_sender === true || 
         lastMsg.sender?.is_me === true ||
-        lastMsg.sender_id === ACCOUNT_ID
-      ) : true; // If no last message info, assume no action needed
+        (lastMsg.sender_id && lastMsg.sender_id === ACCOUNT_ID)
+      ) : false;
 
-      const hasDraft = existingDraftChatIds.has(chat.id);
-
-      const chatItem = {
+      needsAttention.push({
         chat_id: chat.id,
         prospect_name: prospectName,
-        last_message_preview: lastMsg?.text?.substring(0, 100) || chat.last_message_text?.substring(0, 100) || '',
-        last_message_at: lastMsg?.timestamp || chat.last_message_at || chat.updated_at || '',
-        has_draft: hasDraft,
-      };
-
-      if (hasDraft) {
-        alreadyHasDraft.push(chatItem);
-      } else if (!isSentByMe && lastMsg?.text) {
-        // Last message is from prospect and has content
-        needsAttention.push(chatItem);
-      }
+        last_message_preview: lastMessageText.substring(0, 120),
+        last_message_at: lastMessageAt,
+        has_draft: false,
+        is_prospect_last: !isSentByMe, // Let dashboard show who sent last
+        message_count: chat.messages_count || 0,
+      });
     }
 
-    // Sort by most recent first
-    needsAttention.sort((a: any, b: any) => 
-      new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()
-    );
+    // Sort: prospect's last message first, then by date
+    needsAttention.sort((a: any, b: any) => {
+      if (a.is_prospect_last && !b.is_prospect_last) return -1;
+      if (!a.is_prospect_last && b.is_prospect_last) return 1;
+      return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime();
+    });
+
+    console.log('[Copilot Scan GET] Returning', needsAttention.length, 'chats for copilot');
 
     return NextResponse.json({
       needs_attention: needsAttention,
-      already_has_draft: alreadyHasDraft,
       total_scanned: chats.length,
     });
   } catch (error) {
     console.error('[Copilot Scan GET] Error:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+    return NextResponse.json({ error: String(error), needs_attention: [], total_scanned: 0 }, { status: 500 });
   }
 }

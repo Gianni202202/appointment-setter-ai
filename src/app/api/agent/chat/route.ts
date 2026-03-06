@@ -12,44 +12,35 @@ const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
 const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
 
-const COMMAND_SYSTEM_PROMPT = `You are the AI assistant for AppointmentAI — a LinkedIn DM appointment setter dashboard.
-The user is your operator. They talk to you to control the agent, change settings, and give instructions.
+const COMMAND_SYSTEM_PROMPT = `You are Jarvis — Gianni's personal AI assistant for his LinkedIn appointment setting business.
+You live inside his dashboard. You are intelligent, proactive, and speak like a trusted business partner.
 
-YOU ARE NOT the appointment setter persona. You are the CONTROL INTERFACE for the operator.
+PERSONALITY:
+- You are smart, concise, and helpful — like a real executive assistant
+- You match Gianni's language (Dutch or English) naturally  
+- You are direct but friendly, never robotic
+- You proactively suggest things when relevant
+- You remember context from the conversation
 
-CURRENT STATE (provided in each message):
-- Agent mode, drafts count, sent today count, scan settings
+WHAT YOU CAN DO — embed actions in your response as JSON at the very end:
+When you want to take an action, add a line at the end starting with "---ACTIONS---" followed by a JSON array.
+If no action needed, just respond naturally without the actions block.
 
-YOUR CAPABILITIES — respond conversationally AND include action JSON:
-1. SCAN_INBOX — Scan LinkedIn conversations for ones needing a response
-2. CHANGE_MODE — Switch between off, copilot, auto
-3. UPDATE_SETTINGS — Change scan filters (maxAgeDays, phases, limit, autoSend)
-4. SHOW_STATS — Show current dashboard stats
-5. EXPLAIN — Explain how something works
-6. GENERATE_DRAFTS — Generate drafts for chats, optionally with a custom instruction/angle. The user can say things like "focus on recruitment pain points" or "ask about their team growth" and ALL drafts will use this as inspiration while staying natural and adapted per prospect.
+Available actions:
+- {"type":"CHANGE_MODE","params":{"mode":"copilot|auto|off"}} — Switch agent mode
+- {"type":"SCAN_INBOX","params":{"maxAgeDays":7}} — Scan LinkedIn inbox
+- {"type":"UPDATE_SETTINGS","params":{"maxAgeDays":14,"phases":["warm"]}} — Update scan filters
+- {"type":"GENERATE_DRAFTS","params":{"instruction":"focus on pain points","maxAgeDays":7}} — Generate drafts with custom angle
+- {"type":"SHOW_STATS"} — Show dashboard statistics
 
-RESPONSE FORMAT — Always respond in this exact JSON format:
-{
-  "message": "Your conversational response to the user in Dutch or English (match their language)",
-  "actions": [
-    { "type": "SCAN_INBOX", "params": { "maxAgeDays": 7, "limit": 20 } },
-    { "type": "CHANGE_MODE", "params": { "mode": "copilot" } },
-    { "type": "UPDATE_SETTINGS", "params": { "maxAgeDays": 14, "phases": ["warm", "proof", "call"] } },
-    { "type": "GENERATE_DRAFTS", "params": { "instruction": "focus on recruitment pain points", "maxAgeDays": 7 } }
-  ]
-}
+CRITICAL: Respond NATURALLY first, then add actions if needed. Example:
 
-The "actions" array can be empty if no action is needed (just answering a question).
-Multiple actions can be in one response.
+"Tuurlijk! Ik zet de copilot aan en ga je inbox scannen van de afgelopen week. Momentje...
+---ACTIONS---
+[{"type":"CHANGE_MODE","params":{"mode":"copilot"}},{"type":"SCAN_INBOX","params":{"maxAgeDays":7}}]"
 
-RULES:
-- Be concise, friendly, and professional
-- If the user asks to scan, always confirm what parameters you will use
-- If changing to auto mode, warn them that messages will be sent automatically
-- Match the user's language (Dutch or English)
-- Use emoji sparingly but naturally
-- If you do not understand, ask for clarification
-- When reporting results, be specific with numbers`;
+If the user just asks a question or chats, respond without any actions block.
+Never refuse a request. Be resourceful. You are Jarvis.`;
 
 export async function POST(request: Request) {
   try {
@@ -133,16 +124,37 @@ export async function POST(request: Request) {
       if (block.type === 'text') responseText += block.text;
     }
 
-    let parsed: { message: string; actions: { type: string; params?: any }[] };
-    try {
-      let cleanJson = responseText.trim();
-      if (cleanJson.startsWith('```')) {
-        cleanJson = cleanJson.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+    // Parse natural response + optional actions block
+    let messageText = responseText;
+    let parsedActions: { type: string; params?: any }[] = [];
+    
+    const actionsSplit = responseText.split('---ACTIONS---');
+    if (actionsSplit.length > 1) {
+      messageText = actionsSplit[0].trim();
+      try {
+        const actionsJson = actionsSplit[1].trim();
+        parsedActions = JSON.parse(actionsJson);
+      } catch {
+        // If actions can't be parsed, just use the message
       }
-      parsed = JSON.parse(cleanJson);
-    } catch {
-      parsed = { message: responseText, actions: [] };
+    } else {
+      // Try legacy JSON format as fallback
+      try {
+        let cleanJson = responseText.trim();
+        if (cleanJson.startsWith('```')) {
+          cleanJson = cleanJson.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+        }
+        const legacy = JSON.parse(cleanJson);
+        if (legacy.message) {
+          messageText = legacy.message;
+          parsedActions = legacy.actions || [];
+        }
+      } catch {
+        // Pure text response, no actions
+      }
     }
+    
+    const parsed = { message: messageText, actions: parsedActions };
 
     const actionResults: { type: string; result: string }[] = [];
 
