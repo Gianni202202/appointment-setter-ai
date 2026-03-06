@@ -92,19 +92,30 @@ export default function Dashboard() {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  // Load chats needing attention when in copilot mode
+  // Load chats for copilot — uses /api/conversations (same API that works on Conversations page)
   const loadCopilotChats = useCallback(async () => {
-    if (!linkedInConnected) return;
     setLoadingChats(true);
     try {
-      const res = await fetch('/api/agent/copilot-scan');
+      const res = await fetch('/api/conversations');
       if (res.ok) {
-        const data = await res.json();
-        setChatsNeedingAttention(data.needs_attention || []);
+        const conversations = await res.json();
+        if (Array.isArray(conversations)) {
+          // Transform to copilot format with chat selection
+          const chatItems: ChatItem[] = conversations.map((c: any) => ({
+            chat_id: c.id || c.unipile_chat_id,
+            prospect_name: c.prospect_name || 'LinkedIn Contact',
+            last_message_preview: (c.last_message_text || '').substring(0, 120),
+            last_message_at: c.last_message_at || '',
+            has_draft: false,
+            is_prospect_last: true, // Show all for selection
+            message_count: c.message_count || 0,
+          }));
+          setChatsNeedingAttention(chatItems);
+        }
       }
     } catch (err) { console.error('Copilot chats load error:', err); }
     finally { setLoadingChats(false); }
-  }, [linkedInConnected]);
+  }, []);
 
   // Auto-load copilot chats when entering copilot mode
   useEffect(() => {

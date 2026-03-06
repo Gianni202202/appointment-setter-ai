@@ -196,18 +196,19 @@ export async function POST(request: Request) {
               const existingDraftChatIds = new Set(
                 getDrafts().filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
               );
-              let needsAttention = 0, alreadyDrafted = 0, tooOld = 0;
+              let totalActive = 0, alreadyDrafted = 0, prospectLast = 0, youLast = 0;
               for (const chat of chats) {
                 if (chat.account_id && chat.account_id !== ACCOUNT_ID) continue;
+                if (existingDraftChatIds.has(chat.id)) { alreadyDrafted++; continue; }
                 const lastMsg = chat.last_message;
-                const msgDate = lastMsg?.timestamp ? new Date(lastMsg.timestamp) : null;
-                if (existingDraftChatIds.has(chat.id)) alreadyDrafted++;
-                else if (msgDate && msgDate < cutoffDate) tooOld++;
-                else if (lastMsg && !(lastMsg.is_sender || lastMsg.sender?.is_me)) needsAttention++;
+                const isSentByMe = lastMsg ? (lastMsg.is_sender || lastMsg.sender?.is_me) : false;
+                if (isSentByMe) youLast++;
+                else prospectLast++;
+                totalActive++;
               }
               actionResults.push({
                 type: 'SCAN_INBOX',
-                result: `Scanned ${chats.length} chats: ${needsAttention} need attention, ${alreadyDrafted} already have drafts, ${tooOld} older than ${maxAge} days`,
+                result: `Scanned ${chats.length} chats: ${totalActive} active conversations (${prospectLast} awaiting your reply, ${youLast} awaiting prospect reply), ${alreadyDrafted} already have drafts`,
               });
             } else {
               actionResults.push({ type: 'SCAN_INBOX', result: 'Failed to fetch chats' });
@@ -244,7 +245,7 @@ export async function POST(request: Request) {
               getDrafts().filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
             );
             
-            // Filter chats that need attention
+            // Include ALL active chats (user decides which matter, not the system)
             const chatIdsToProcess: string[] = [];
             for (const chat of chats) {
               if (chat.account_id && chat.account_id !== ACCOUNT_ID) continue;
@@ -252,8 +253,8 @@ export async function POST(request: Request) {
               const lastMsg = chat.last_message;
               const msgDate = lastMsg?.timestamp ? new Date(lastMsg.timestamp) : null;
               if (msgDate && msgDate < cutoffDate) continue;
-              const isSentByMe = lastMsg ? (lastMsg.is_sender || lastMsg.sender?.is_me) : true;
-              if (!isSentByMe && lastMsg?.text) chatIdsToProcess.push(chat.id);
+              // Include ALL chats — don't filter by who sent last
+              if (lastMsg) chatIdsToProcess.push(chat.id);
             }
             
             if (chatIdsToProcess.length === 0) {
