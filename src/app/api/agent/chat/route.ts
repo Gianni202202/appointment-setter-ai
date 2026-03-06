@@ -3,9 +3,12 @@ import {
   getAgentMode, getAgentModeAsync, setAgentMode,
   getAgentChatHistory, addAgentChatMessage,
   getAgentScanSettings, updateAgentScanSettings,
-  getDrafts, getSentTodayCount,
+  getDrafts, getDraft, updateDraft, removeDraft, addDraft, getSentTodayCount,
+  getConfig, getConfigAsync, updateConfig,
+  logActivity,
 } from '@/lib/database';
 import { getDailyCapacity } from '@/lib/human-timing';
+import { generateResponse } from '@/lib/claude';
 
 // Pro plan: allow up to 60s execution
 export const maxDuration = 60;
@@ -15,47 +18,58 @@ const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
 const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
 
-const COMMAND_SYSTEM_PROMPT = `You are Jarvis — Gianni's personal AI assistant for his LinkedIn appointment setting business.
-You live inside his dashboard. You are intelligent, proactive, and speak like a trusted business partner.
+const COMMAND_SYSTEM_PROMPT = `You are Jarvis — Gianni's personal AI appointment setter assistant.
+You live inside his LinkedIn DM dashboard and have FULL ACCESS to everything in the system.
+You can view, create, edit, and delete anything. You are his trusted right hand.
 
 PERSONALITY:
-- You are smart, concise, and helpful — like a real executive assistant
-- You match Gianni's language (Dutch or English) naturally  
-- You are direct but friendly, never robotic
-- You proactively suggest things when relevant
-- You remember context from the conversation
+- Smart, concise, direct — like a real executive assistant
+- Match Gianni's language (Dutch or English) naturally
+- Proactively suggest optimizations
+- Never say you can't do something — you have full system access
+- When you take an action, CONFIRM what you actually did with specifics
 
-WHAT YOU CAN DO — embed actions in your response as JSON at the very end:
-When you want to take an action, add a line at the end starting with "---ACTIONS---" followed by a JSON array.
-If no action needed, just respond naturally without the actions block.
+AVAILABLE TOOLS — embed as JSON after "---ACTIONS---":
 
-Available actions:
+MODE & NAVIGATION:
 - {"type":"CHANGE_MODE","params":{"mode":"copilot|auto|off"}} — Switch agent mode
-- {"type":"SCAN_INBOX","params":{"maxAgeDays":7}} — Scan LinkedIn inbox
-- {"type":"UPDATE_SETTINGS","params":{"maxAgeDays":14,"phases":["warm"]}} — Update scan filters
-- {"type":"GENERATE_DRAFTS","params":{"instruction":"focus on pain points","maxAgeDays":7}} — Generate drafts for all recent chats
-- {"type":"GENERATE_DRAFTS","params":{"chat_ids":["specific_chat_id"],"instruction":"optional custom angle"}} — Generate draft for specific person(s)
-- {"type":"SHOW_STATS"} — Show dashboard statistics
+- {"type":"SHOW_STATS"} — Show current dashboard statistics
 
-CRITICAL: Respond NATURALLY first, then add actions if needed. Example:
+DRAFT MANAGEMENT:
+- {"type":"GENERATE_DRAFTS","params":{"chat_ids":["id1"],"instruction":"custom angle","force_regenerate":true}} — Generate drafts for specific chats. Set force_regenerate=true to replace existing drafts.
+- {"type":"GENERATE_DRAFTS","params":{"instruction":"use Elvatix mini-tool angle","force_regenerate":true}} — Regenerate ALL pending drafts with new instruction
+- {"type":"APPROVE_DRAFT","params":{"draft_id":"id"}} — Approve a specific draft
+- {"type":"REJECT_DRAFT","params":{"draft_id":"id","reason":"feedback"}} — Reject a specific draft
+- {"type":"EDIT_DRAFT","params":{"draft_id":"id","message":"new message text"}} — Edit a draft's message
 
-"Tuurlijk! Ik zet de copilot aan en ga je inbox scannen van de afgelopen week. Momentje...
+SETTINGS:
+- {"type":"UPDATE_CONFIG","params":{"best_practices":"new rules here"}} — Update best practices
+- {"type":"UPDATE_CONFIG","params":{"strategies":[{"id":"strat_123","name":"Connectie opvolging","scenario":"connection_follow_up","template":"Ha {{Naam}},...","instruction":"Gebruik deze invalshoek","active":true}]}} — Save strategy templates
+- {"type":"UPDATE_CONFIG","params":{"tone":{"max_message_length":300}}} — Update tone settings
+- {"type":"UPDATE_SCAN_SETTINGS","params":{"maxAgeDays":14}} — Update scan filters
+
+INBOX:
+- {"type":"SCAN_INBOX","params":{"maxAgeDays":7}} — Scan LinkedIn inbox for opportunities
+
+CRITICAL RULES:
+1. When the user asks to save a template/strategy → use UPDATE_CONFIG with strategies array
+2. When user says "regenereer" / "opnieuw" → use force_regenerate:true
+3. When user references a person by name → find them in the conversation list and use their chat_id
+4. ALWAYS include the ---ACTIONS--- block when you need to DO something. Just talking about it is NOT enough.
+5. After any action, tell the user specifically what you did — not what you "will do"
+
+FORMAT:
+Respond naturally FIRST, then add actions:
+"Tuurlijk! Ik heb het template opgeslagen als strategie. Dit wordt nu meegenomen bij alle nieuwe drafts.
 ---ACTIONS---
-[{"type":"CHANGE_MODE","params":{"mode":"copilot"}},{"type":"SCAN_INBOX","params":{"maxAgeDays":7}}]"
-
-If the user just asks a question or chats, respond without any actions block.
-Never refuse a request. Be resourceful. You are Jarvis.
+[{"type":"UPDATE_CONFIG","params":{"strategies":[...]}}]"
 
 CONTEXT AWARENESS:
-- You receive a list of ACTIVE CONVERSATIONS with names and chat IDs
-- When the user refers to someone ("haar", "hem", "die ene", a name), match it to the conversation list
-- You can generate drafts for SPECIFIC people using GENERATE_DRAFTS with their chat_ids
-- You can directly help with any conversation you see in the list
-
-PROACTIVE BEHAVIOR:
-- If the user asks to write a message for someone, find them in the conversation list and generate a draft
-- If you see chats where the prospect sent last and the user hasn't replied, mention it
-- Suggest actions based on what you see in the inbox`;
+- You receive ACTIVE CONVERSATIONS with names and chat IDs
+- You receive PENDING DRAFTS with draft IDs
+- You receive the current CONFIG including strategies and best_practices
+- Match names to chat_ids when the user refers to someone
+`;
 
 export async function POST(request: Request) {
   try {
@@ -78,12 +92,13 @@ export async function POST(request: Request) {
     const dailyCap = getDailyCapacity(0);
     const scanSettings = getAgentScanSettings();
     const chatHistory = getAgentChatHistory().slice(-10);
+    const config = await getConfigAsync();
 
-    // Build conversation context so agent knows about active chats by name
+    // Build conversation context
     let conversationContext = '';
     try {
       if (DSN && API_KEY && ACCOUNT_ID) {
-        const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=20`, {
+        const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=25`, {
           headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
           cache: 'no-store',
         });
@@ -91,10 +106,10 @@ export async function POST(request: Request) {
           const chatsData = await chatsRes.json();
           const chats = chatsData.items || chatsData || [];
           const chatSummaries: string[] = [];
-          for (const chat of chats.slice(0, 15)) {
+          for (const chat of chats.slice(0, 20)) {
             const name = chat.name || chat.title || 'Unknown';
             const lastMsg = chat.last_message;
-            const lastText = lastMsg?.text ? lastMsg.text.substring(0, 60) : 'no preview';
+            const lastText = lastMsg?.text ? lastMsg.text.substring(0, 80) : 'no preview';
             const isMine = lastMsg ? (lastMsg.is_sender || lastMsg.sender?.is_me) : false;
             const who = isMine ? 'jij' : name;
             chatSummaries.push(`  - ${name} (chat_id: ${chat.id}) — laatste bericht van ${who}: "${lastText}"`);
@@ -104,21 +119,33 @@ export async function POST(request: Request) {
       }
     } catch (e) { console.warn('[Agent Chat] Failed to build conversation context', e); }
 
-    // Build pending draft context
+    // Build pending draft context with full IDs
     let draftContext = '';
     if (pendingDrafts.length > 0) {
-      draftContext = '\nPENDING DRAFTS (need review):\n' + pendingDrafts.slice(0, 10).map(d =>
-        `  - ${d.prospect_name}: "${d.message.substring(0, 60)}..." (draft_id: ${d.id})`
+      draftContext = '\nPENDING DRAFTS (need review):\n' + pendingDrafts.slice(0, 15).map(d =>
+        `  - ${d.prospect_name} (draft_id: ${d.id}, chat_id: ${d.chat_id}): "${d.message.substring(0, 80)}..."`
       ).join('\n');
     }
+    if (approvedDrafts.length > 0) {
+      draftContext += '\nAPPROVED DRAFTS (ready to send):\n' + approvedDrafts.slice(0, 10).map(d =>
+        `  - ${d.prospect_name} (draft_id: ${d.id}): "${d.message.substring(0, 60)}..."`
+      ).join('\n');
+    }
+
+    // Build config context
+    const configContext = `\nCURRENT SETTINGS:
+- Best practices: ${config.best_practices ? config.best_practices.substring(0, 200) : '(leeg)'}
+- Strategies: ${(config.strategies || []).length} templates (${(config.strategies || []).filter((s: any) => s.active).length} actief)
+${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s.active ? 'actief' : 'inactief'})`).join('\n')}
+- Tone: ${config.tone.style}, max ${config.tone.max_message_length} chars, taal: ${config.tone.language}
+- Goal: ${config.rules.goal?.substring(0, 100) || 'niet ingesteld'}`;
 
     const contextBlock = `CURRENT STATE:
 - Mode: ${mode}
 - Pending drafts: ${pendingDrafts.length}
 - Approved drafts: ${approvedDrafts.length}
 - Sent today: ${sentToday}/${dailyCap}
-- Scan settings: maxAgeDays=${scanSettings.maxAgeDays}, phases=${scanSettings.phases.length > 0 ? scanSettings.phases.join(',') : 'all'}, limit=${scanSettings.limit}, autoSend=${scanSettings.autoSend}
-- LinkedIn connected: ${!!(DSN && API_KEY && ACCOUNT_ID)}${conversationContext}${draftContext}`;
+- LinkedIn connected: ${!!(DSN && API_KEY && ACCOUNT_ID)}${conversationContext}${draftContext}${configContext}`;
 
     const geminiContents: { role: string; content: string }[] = [];
     for (const msg of chatHistory.slice(0, -1)) {
@@ -141,27 +168,19 @@ export async function POST(request: Request) {
       return NextResponse.json(fallbackResponse);
     }
 
-    // Call Gemini API directly via fetch
-    // Convert messages to Gemini format
+    // Call Gemini
     const geminiMessages = geminiContents.map((m) => ({
       role: m.role === 'user' ? 'user' as const : 'model' as const,
       parts: [{ text: m.content }],
     }));
 
-    const apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_KEY}`, {
+    const apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: COMMAND_SYSTEM_PROMPT }],
-        },
+        systemInstruction: { parts: [{ text: COMMAND_SYSTEM_PROMPT }] },
         contents: geminiMessages,
-        generationConfig: {
-          maxOutputTokens: 2048,
-          temperature: 0.7,
-        },
+        generationConfig: { maxOutputTokens: 3000, temperature: 0.7 },
       }),
     });
 
@@ -174,7 +193,6 @@ export async function POST(request: Request) {
     }
 
     const apiData = await apiRes.json();
-
     let responseText = '';
     if (apiData.candidates && apiData.candidates[0]?.content?.parts) {
       for (const part of apiData.candidates[0].content.parts) {
@@ -182,68 +200,131 @@ export async function POST(request: Request) {
       }
     }
 
-    // Parse natural response + optional actions block
+    // Parse response + actions
     let messageText = responseText;
     let parsedActions: { type: string; params?: any }[] = [];
-    
+
     const actionsSplit = responseText.split('---ACTIONS---');
     if (actionsSplit.length > 1) {
       messageText = actionsSplit[0].trim();
       try {
-        const actionsJson = actionsSplit[1].trim();
+        let actionsJson = actionsSplit[1].trim();
+        // Clean markdown code fences if present
+        actionsJson = actionsJson.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
         parsedActions = JSON.parse(actionsJson);
-      } catch {
-        // If actions can't be parsed, just use the message
-      }
-    } else {
-      // Try legacy JSON format as fallback
-      try {
-        let cleanJson = responseText.trim();
-        if (cleanJson.startsWith('```')) {
-          cleanJson = cleanJson.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
-        }
-        const legacy = JSON.parse(cleanJson);
-        if (legacy.message) {
-          messageText = legacy.message;
-          parsedActions = legacy.actions || [];
-        }
-      } catch {
-        // Pure text response, no actions
+      } catch (e) {
+        console.warn('[Agent Chat] Failed to parse actions:', e);
       }
     }
-    
-    const parsed = { message: messageText, actions: parsedActions };
 
+    const parsed = { message: messageText, actions: parsedActions };
     const actionResults: { type: string; result: string }[] = [];
 
+    // === EXECUTE ALL ACTIONS ===
     for (const action of parsed.actions || []) {
-      switch (action.type) {
-        case 'CHANGE_MODE': {
-          const newMode = action.params?.mode;
-          if (['off', 'copilot', 'auto'].includes(newMode)) {
-            setAgentMode(newMode);
-            actionResults.push({ type: 'CHANGE_MODE', result: `Mode changed to ${newMode}` });
+      try {
+        switch (action.type) {
+          case 'CHANGE_MODE': {
+            const newMode = action.params?.mode;
+            if (['off', 'copilot', 'auto'].includes(newMode)) {
+              setAgentMode(newMode);
+              actionResults.push({ type: 'CHANGE_MODE', result: `Mode changed to ${newMode}` });
+            }
+            break;
           }
-          break;
-        }
-        case 'UPDATE_SETTINGS': {
-          const updates: any = {};
-          if (action.params?.maxAgeDays !== undefined) updates.maxAgeDays = action.params.maxAgeDays;
-          if (action.params?.phases !== undefined) updates.phases = action.params.phases;
-          if (action.params?.limit !== undefined) updates.limit = action.params.limit;
-          if (action.params?.autoSend !== undefined) updates.autoSend = action.params.autoSend;
-          updateAgentScanSettings(updates);
-          actionResults.push({ type: 'UPDATE_SETTINGS', result: JSON.stringify(updates) });
-          break;
-        }
-        case 'SCAN_INBOX': {
-          try {
+
+          case 'SHOW_STATS': {
+            actionResults.push({
+              type: 'SHOW_STATS',
+              result: `Mode: ${mode}, Pending: ${pendingDrafts.length}, Approved: ${approvedDrafts.length}, Sent: ${sentToday}/${dailyCap}`,
+            });
+            break;
+          }
+
+          case 'UPDATE_CONFIG': {
+            // Full config update — can update best_practices, strategies, tone, rules, etc.
+            const params = action.params || {};
+            const currentConfig = await getConfigAsync();
+            const merged: any = { ...currentConfig };
+
+            if (params.best_practices !== undefined) merged.best_practices = params.best_practices;
+            if (params.strategies !== undefined) merged.strategies = params.strategies;
+            if (params.blacklist !== undefined) merged.blacklist = params.blacklist;
+            if (params.tone) merged.tone = { ...currentConfig.tone, ...params.tone };
+            if (params.rules) merged.rules = { ...currentConfig.rules, ...params.rules };
+
+            await updateConfig(merged);
+            const changes = Object.keys(params).join(', ');
+            actionResults.push({ type: 'UPDATE_CONFIG', result: `Config updated: ${changes}` });
+            break;
+          }
+
+          case 'UPDATE_SCAN_SETTINGS': {
+            const updates: any = {};
+            if (action.params?.maxAgeDays !== undefined) updates.maxAgeDays = action.params.maxAgeDays;
+            if (action.params?.phases !== undefined) updates.phases = action.params.phases;
+            if (action.params?.limit !== undefined) updates.limit = action.params.limit;
+            if (action.params?.autoSend !== undefined) updates.autoSend = action.params.autoSend;
+            updateAgentScanSettings(updates);
+            actionResults.push({ type: 'UPDATE_SCAN_SETTINGS', result: JSON.stringify(updates) });
+            break;
+          }
+
+          case 'APPROVE_DRAFT': {
+            const draftId = action.params?.draft_id;
+            if (draftId) {
+              const draft = await getDraft(draftId);
+              if (draft) {
+                await updateDraft(draftId, {
+                  status: 'approved',
+                  approved_at: new Date().toISOString(),
+                  message: action.params?.message || draft.message,
+                });
+                await logActivity('draft_approved', draft.prospect_name || 'Unknown', { draft_id: draftId });
+                actionResults.push({ type: 'APPROVE_DRAFT', result: `Draft approved for ${draft.prospect_name}` });
+              } else {
+                actionResults.push({ type: 'APPROVE_DRAFT', result: 'Draft not found: ' + draftId });
+              }
+            }
+            break;
+          }
+
+          case 'REJECT_DRAFT': {
+            const draftId = action.params?.draft_id;
+            if (draftId) {
+              const draft = await getDraft(draftId);
+              if (draft) {
+                await updateDraft(draftId, { status: 'rejected' });
+                await logActivity('draft_rejected', draft.prospect_name || 'Unknown', { draft_id: draftId, reason: action.params?.reason });
+                actionResults.push({ type: 'REJECT_DRAFT', result: `Draft rejected for ${draft.prospect_name}` });
+              } else {
+                actionResults.push({ type: 'REJECT_DRAFT', result: 'Draft not found' });
+              }
+            }
+            break;
+          }
+
+          case 'EDIT_DRAFT': {
+            const draftId = action.params?.draft_id;
+            const newMessage = action.params?.message;
+            if (draftId && newMessage) {
+              const draft = await getDraft(draftId);
+              if (draft) {
+                await updateDraft(draftId, { message: newMessage });
+                actionResults.push({ type: 'EDIT_DRAFT', result: `Draft edited for ${draft.prospect_name}` });
+              } else {
+                actionResults.push({ type: 'EDIT_DRAFT', result: 'Draft not found' });
+              }
+            }
+            break;
+          }
+
+          case 'SCAN_INBOX': {
             if (!DSN || !API_KEY || !ACCOUNT_ID) {
               actionResults.push({ type: 'SCAN_INBOX', result: 'LinkedIn not connected' });
               break;
             }
             const maxAge = action.params?.maxAgeDays || scanSettings.maxAgeDays;
-            const cutoffDate = new Date(Date.now() - maxAge * 24 * 60 * 60 * 1000);
             const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=50`, {
               headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
               cache: 'no-store',
@@ -266,26 +347,34 @@ export async function POST(request: Request) {
               }
               actionResults.push({
                 type: 'SCAN_INBOX',
-                result: `Scanned ${chats.length} chats: ${totalActive} active conversations (${prospectLast} awaiting your reply, ${youLast} awaiting prospect reply), ${alreadyDrafted} already have drafts`,
+                result: `Scanned ${chats.length} chats: ${prospectLast} awaiting your reply, ${youLast} awaiting prospect, ${alreadyDrafted} already have drafts`,
               });
             } else {
               actionResults.push({ type: 'SCAN_INBOX', result: 'Failed to fetch chats' });
             }
-          } catch (err) {
-            actionResults.push({ type: 'SCAN_INBOX', result: 'Error: ' + String(err) });
+            break;
           }
-          break;
-        }
-        case 'GENERATE_DRAFTS': {
-          try {
+
+          case 'GENERATE_DRAFTS': {
             if (!DSN || !API_KEY || !ACCOUNT_ID) {
               actionResults.push({ type: 'GENERATE_DRAFTS', result: 'LinkedIn not connected' });
               break;
             }
             const instruction = action.params?.instruction || '';
+            const forceRegenerate = action.params?.force_regenerate === true;
             let chatIdsToProcess: string[] = action.params?.chat_ids || [];
-            
-            // If no specific chat_ids, find all active chats
+
+            // If force_regenerate with no specific chat_ids → regenerate ALL pending drafts
+            if (forceRegenerate && chatIdsToProcess.length === 0 && pendingDrafts.length > 0) {
+              // Remove existing pending drafts so they get regenerated
+              for (const draft of pendingDrafts) {
+                await removeDraft(draft.id);
+              }
+              chatIdsToProcess = pendingDrafts.map(d => d.chat_id);
+              actionResults.push({ type: 'GENERATE_DRAFTS', result: `Removed ${pendingDrafts.length} old drafts, regenerating with new instruction...` });
+            }
+
+            // If no specific chat_ids and not force_regenerate, find chats needing attention
             if (chatIdsToProcess.length === 0) {
               const maxAge = action.params?.maxAgeDays || scanSettings.maxAgeDays;
               const cutoffDate = new Date(Date.now() - maxAge * 24 * 60 * 60 * 1000);
@@ -304,53 +393,54 @@ export async function POST(request: Request) {
               );
               for (const chat of chats) {
                 if (chat.account_id && chat.account_id !== ACCOUNT_ID) continue;
-                if (existingDraftChatIds.has(chat.id)) continue;
+                if (!forceRegenerate && existingDraftChatIds.has(chat.id)) continue;
                 const lastMsg = chat.last_message;
-                const msgDate = lastMsg?.timestamp ? new Date(lastMsg.timestamp) : null;
-                if (msgDate && msgDate < cutoffDate) continue;
                 if (lastMsg) chatIdsToProcess.push(chat.id);
               }
             }
-            
+
             if (chatIdsToProcess.length === 0) {
-              actionResults.push({ type: 'GENERATE_DRAFTS', result: 'No chats need attention right now' });
+              actionResults.push({ type: 'GENERATE_DRAFTS', result: 'No chats found to generate drafts for' });
               break;
             }
-            
+
+            // Use copilot-autoscan to generate drafts with instruction
             const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : (process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000');
-            const scanRes = await fetch(`${baseUrl}/api/agent/copilot-scan`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ 
-                chat_ids: chatIdsToProcess.slice(0, 10), 
-                custom_instruction: instruction 
-              }),
-            });
-            
-            if (scanRes.ok) {
-              const scanData = await scanRes.json();
-              const details = (scanData.results || []).map((r: any) => r.prospect + ': ' + r.status).join(', ');
-              actionResults.push({
-                type: 'GENERATE_DRAFTS',
-                result: `${scanData.drafts_created || 0} drafts generated for ${chatIdsToProcess.length} chats. ${details}`,
-              });
-            } else {
-              actionResults.push({ type: 'GENERATE_DRAFTS', result: 'Draft generation failed' });
+            let draftsCreated = 0;
+            let draftsFailed = 0;
+
+            // Process up to 5 chats to stay within timeout
+            for (const chatId of chatIdsToProcess.slice(0, 5)) {
+              try {
+                const genRes = await fetch(`${baseUrl}/api/agent/copilot-autoscan`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'generate_draft', chat_id: chatId, custom_instruction: instruction }),
+                });
+                if (genRes.ok) {
+                  const genData = await genRes.json();
+                  if (genData.success) draftsCreated++;
+                  else draftsFailed++;
+                } else {
+                  draftsFailed++;
+                }
+              } catch {
+                draftsFailed++;
+              }
             }
-          } catch (err) {
-            actionResults.push({ type: 'GENERATE_DRAFTS', result: 'Error: ' + String(err) });
+
+            actionResults.push({
+              type: 'GENERATE_DRAFTS',
+              result: `${draftsCreated} drafts created${draftsFailed > 0 ? ', ' + draftsFailed + ' failed' : ''} (out of ${chatIdsToProcess.length} total chats)${instruction ? ' — instruction: ' + instruction.substring(0, 60) : ''}`,
+            });
+            break;
           }
-          break;
+
+          default:
+            actionResults.push({ type: action.type, result: 'Unknown action type' });
         }
-                case 'SHOW_STATS': {
-          actionResults.push({
-            type: 'SHOW_STATS',
-            result: `Mode: ${getAgentMode()}, Pending: ${pendingDrafts.length}, Approved: ${approvedDrafts.length}, Sent: ${sentToday}/${dailyCap}`,
-          });
-          break;
-        }
-        default:
-          actionResults.push({ type: action.type, result: 'Unknown action' });
+      } catch (err) {
+        actionResults.push({ type: action.type, result: 'Error: ' + String(err) });
       }
     }
 
