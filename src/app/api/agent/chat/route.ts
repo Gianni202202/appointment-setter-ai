@@ -8,7 +8,6 @@ import {
   logActivity,
 } from '@/lib/database';
 import { getDailyCapacity } from '@/lib/human-timing';
-import { generateResponse } from '@/lib/claude';
 
 // Pro plan: allow up to 60s execution
 export const maxDuration = 60;
@@ -97,7 +96,7 @@ export async function POST(request: Request) {
     // Build conversation context
     let conversationContext = '';
     try {
-      if (DSN && API_KEY && ACCOUNT_ID) {
+      if (DSN && API_KEY && ACCOUNT_ID && DSN !== 'undefined') {
         const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=25`, {
           headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
           cache: 'no-store',
@@ -132,13 +131,18 @@ export async function POST(request: Request) {
       ).join('\n');
     }
 
-    // Build config context
-    const configContext = `\nCURRENT SETTINGS:
+    // Build config context (with safe access)
+    let configContext = '';
+    try {
+      const tone = config.tone || {} as any;
+      const rules = config.rules || {} as any;
+      configContext = `\nCURRENT SETTINGS:
 - Best practices: ${config.best_practices ? config.best_practices.substring(0, 200) : '(leeg)'}
 - Strategies: ${(config.strategies || []).length} templates (${(config.strategies || []).filter((s: any) => s.active).length} actief)
 ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s.active ? 'actief' : 'inactief'})`).join('\n')}
-- Tone: ${config.tone.style}, max ${config.tone.max_message_length} chars, taal: ${config.tone.language}
-- Goal: ${config.rules.goal?.substring(0, 100) || 'niet ingesteld'}`;
+- Tone: ${tone.style || 'not set'}, max ${tone.max_message_length || 300} chars, taal: ${tone.language || 'nl'}
+- Goal: ${rules.goal?.substring(0, 100) || 'niet ingesteld'}`;
+    } catch (e) { console.warn('[Agent Chat] Config context error:', e); }
 
     const contextBlock = `CURRENT STATE:
 - Mode: ${mode}
@@ -186,8 +190,8 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
 
     if (!apiRes.ok) {
       const errText = await apiRes.text();
-      console.error('[Agent Chat] Gemini API error:', errText);
-      const errorMsg = 'Er ging iets mis met de AI. Probeer het opnieuw.';
+      console.error('[Agent Chat] Gemini API error:', apiRes.status, errText);
+      const errorMsg = `Er ging iets mis met de AI (status ${apiRes.status}). Probeer het opnieuw.`;
       addAgentChatMessage({ role: 'agent', content: errorMsg, timestamp: new Date().toISOString() });
       return NextResponse.json({ message: errorMsg, actions: [], mode });
     }
@@ -198,6 +202,10 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
       for (const part of apiData.candidates[0].content.parts) {
         if (part.text) responseText += part.text;
       }
+    }
+    if (!responseText) {
+      console.warn('[Agent Chat] Empty response from Gemini:', JSON.stringify(apiData).substring(0, 500));
+      responseText = 'Ik heb je verzoek ontvangen, maar kon geen antwoord genereren. Kun je het anders formuleren?';
     }
 
     // Parse response + actions
@@ -456,9 +464,11 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
       actions: actionResults,
       mode: getAgentMode(),
     });
-  } catch (error) {
-    console.error('[Agent Chat] Error:', error);
-    return NextResponse.json({ error: String(error) }, { status: 500 });
+  } catch (error: any) {
+    console.error('[Agent Chat] Error:', error?.message || error, error?.stack || '');
+    const errorMsg = 'Er ging iets mis met de AI. Probeer het opnieuw.';
+    addAgentChatMessage({ role: 'agent', content: errorMsg + ' (Error: ' + String(error?.message || error) + ')', timestamp: new Date().toISOString() });
+    return NextResponse.json({ message: errorMsg, actions: [], error: String(error?.message || error) }, { status: 200 });
   }
 }
 
