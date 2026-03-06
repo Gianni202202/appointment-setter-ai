@@ -1,4 +1,5 @@
 import { Message, AgentConfig, ConversationState } from '@/types';
+import { buildLearningPromptBlock } from '@/lib/self-learning';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 
@@ -506,6 +507,12 @@ Voeg een extra veld toe aan je JSON response:
   "language_preference": "nl or en or null"
 }
 Vul alleen in wat je NIEUW leert uit het LAATSTE bericht van de prospect. Laat velden null als er niets nieuws is.`;
+
+  // === SELF-LEARNING: Inject performance data from previous drafts ===
+  const learningBlock = buildLearningPromptBlock();
+  if (learningBlock) {
+    systemPrompt += learningBlock;
+  }
 
   const conversationHistory = messages.map((m) => ({
     role: m.role === 'prospect' ? 'user' as const : 'assistant' as const,

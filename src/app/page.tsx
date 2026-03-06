@@ -178,12 +178,33 @@ export default function Dashboard() {
 
   async function handleDraftAction(draftId: string, action: 'approve' | 'reject') {
     try {
+      // Find the draft for learning recording
+      const draft = drafts.find(d => d.id === draftId);
+      
       await fetch('/api/agent/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ draft_id: draftId, action }),
       });
+      
+      // Record outcome for self-learning (fire and forget)
+      if (draft) {
+        fetch('/api/agent/learn', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'record_outcome',
+            chat_id: draft.chat_id,
+            phase: (draft as any).phase || 'unknown',
+            original_message: draft.message,
+            outcome: action === 'approve' ? 'approved' : 'rejected',
+            sentiment: (draft as any).sentiment || 'neutral',
+          }),
+        }).catch(() => {}); // Non-blocking
+      }
+      
       await loadAll();
+      showToast(action === 'approve' ? '✓ Draft approved' : '✗ Draft rejected', action === 'approve' ? 'success' : 'error');
     } catch (err) { showToast('Action failed: ' + err, 'error'); }
   }
 
