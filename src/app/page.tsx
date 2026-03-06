@@ -326,9 +326,9 @@ export default function Dashboard() {
             ));
           }
 
-          // Small delay between calls to avoid rate limiting
+          // Delay between calls to avoid rate limiting (3s for Claude)
           if (idx < interesting.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 500));
+            await new Promise(resolve => setTimeout(resolve, 3000));
           }
         }
 

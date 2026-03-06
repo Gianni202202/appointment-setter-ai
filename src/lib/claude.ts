@@ -3,6 +3,7 @@ import { buildLearningPromptBlock } from '@/lib/self-learning';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 const CLAUDE_DM_MODEL = process.env.CLAUDE_DM_MODEL || 'claude-opus-4-20250514';
+const CLAUDE_BULK_MODEL = process.env.CLAUDE_BULK_MODEL || 'claude-sonnet-4-20250514';
 const USE_EXTENDED_THINKING = process.env.CLAUDE_EXTENDED_THINKING === 'true';
 
 // ============================================
@@ -511,7 +512,8 @@ export async function generateResponse(
   messages: Message[],
   prospectInfo?: { name: string; headline: string; company: string },
   legendaryContext?: LegendaryContext,
-  customInstruction?: string
+  customInstruction?: string,
+  useBulkModel: boolean = false,
 ): Promise<ClaudeResponse> {
   let systemPrompt = buildSystemPrompt(config, state);
 
@@ -559,16 +561,45 @@ Gebruik dit als leidraad/inspiratie voor je antwoord, maar pas het aan per prosp
 Houd je verder aan alle andere regels.`;
   }
 
-  const conversationHistory = messages.map((m) => ({
+  let conversationHistory = messages.map((m) => ({
     role: m.role === 'prospect' ? 'user' as const : 'assistant' as const,
     content: m.content,
   }));
 
-  // Add prospect context if available
-  if (prospectInfo && messages.length <= 1) {
+  // Claude API requires the conversation to start with 'user' role.
+  // For connection-accept chats (only agent messages), we need to prepend a user context message.
+  const hasProspectMessages = messages.some(m => m.role === 'prospect');
+
+  if (!hasProspectMessages || messages.length <= 1) {
+    // This is a connection-accept or brand new chat — prospect hasn't said anything yet
+    const contextMsg = prospectInfo
+      ? `[CONTEXT] Dit is een connectie die recent is geaccepteerd. Prospect profiel: Naam: ${prospectInfo.name}${prospectInfo.headline ? ', Headline: ' + prospectInfo.headline : ''}${prospectInfo.company ? ', Bedrijf: ' + prospectInfo.company : ''}. Er is nog geen gesprek gestart. Schrijf een natuurlijk eerste DM als follow-up op de connectie.`
+      : '[CONTEXT] Dit is een connectie die recent is geaccepteerd. Er is nog geen gesprek gestart. Schrijf een natuurlijk eerste DM als follow-up op de connectie.';
+
+    // Rebuild: start with user context, then any existing messages
+    conversationHistory = [
+      { role: 'user' as const, content: contextMsg },
+      ...conversationHistory.filter(m => m.role === 'assistant'), // keep agent messages as context
+    ];
+  }
+
+  // Ensure messages alternate roles (Claude API requirement)
+  // Merge consecutive messages of the same role
+  const mergedHistory: typeof conversationHistory = [];
+  for (const msg of conversationHistory) {
+    if (mergedHistory.length > 0 && mergedHistory[mergedHistory.length - 1].role === msg.role) {
+      mergedHistory[mergedHistory.length - 1].content += '\n\n' + msg.content;
+    } else {
+      mergedHistory.push({ ...msg });
+    }
+  }
+  conversationHistory = mergedHistory;
+
+  // Final safety: ensure first message is 'user'
+  if (conversationHistory.length > 0 && conversationHistory[0].role !== 'user') {
     conversationHistory.unshift({
       role: 'user' as const,
-      content: `[SYSTEM CONTEXT - Niet een bericht van de prospect] Prospect profiel: Naam: ${prospectInfo.name}, Headline: ${prospectInfo.headline}, Bedrijf: ${prospectInfo.company}. Genereer nu je bericht in Gianni-stijl.`,
+      content: '[CONTEXT] Schrijf een follow-up DM voor deze LinkedIn connectie.',
     });
   }
 
@@ -580,9 +611,9 @@ Houd je verder aan alle andere regels.`;
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: CLAUDE_DM_MODEL,
+      model: useBulkModel ? CLAUDE_BULK_MODEL : CLAUDE_DM_MODEL,
       max_tokens: 16000,
-      ...(USE_EXTENDED_THINKING ? {
+      ...(!useBulkModel && USE_EXTENDED_THINKING ? {
         thinking: {
           type: 'enabled',
           budget_tokens: 10000,
@@ -592,6 +623,24 @@ Houd je verder aan alle andere regels.`;
       messages: conversationHistory,
     }),
   });
+
+  if (response.status === 429) {
+    // Rate limited — return a graceful error instead of crashing
+    console.warn('[Claude] Rate limited (429). Returning fallback.');
+    return {
+      message: '',
+      reasoning: 'Rate limit bereikt — probeer later opnieuw',
+      sentiment: 'neutral' as const,
+      has_objection: false,
+      objection_type: null,
+      meeting_mentioned: false,
+      not_interested: false,
+      should_respond: false,
+      needs_human: false,
+      phase: 'koud',
+      confidence: 'low',
+    };
+  }
 
   if (!response.ok) {
     const error = await response.text();

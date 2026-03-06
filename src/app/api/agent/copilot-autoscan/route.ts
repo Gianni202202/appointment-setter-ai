@@ -322,7 +322,7 @@ async function generateDraftForChat(chatId: string) {
     name: prospectName,
     headline: prospectHeadline,
     company: prospectCompany,
-  });
+  }, undefined, undefined, true); // legendaryContext=undefined, customInstruction=undefined, useBulkModel=true
 
   if (aiResponse.message && !aiResponse.message.includes('[AI kon geen antwoord')) {
     const draft = addDraft({
@@ -382,8 +382,13 @@ export async function POST(request: Request) {
     if (action === 'generate_draft') {
       const chatId = body.chat_id;
       if (!chatId) return NextResponse.json({ error: 'chat_id required' }, { status: 400 });
-      const result = await generateDraftForChat(chatId);
-      return NextResponse.json({ success: !!result, draft: result });
+      try {
+        const result = await generateDraftForChat(chatId);
+        return NextResponse.json({ success: !!result, draft: result });
+      } catch (draftErr) {
+        console.error('[generate_draft] Error for chat', chatId, ':', draftErr);
+        return NextResponse.json({ success: false, error: String(draftErr) }, { status: 200 });
+      }
     }
 
     return NextResponse.json({ error: 'Unknown action: ' + action }, { status: 400 });
