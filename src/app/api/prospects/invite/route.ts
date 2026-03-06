@@ -3,6 +3,17 @@ import { getProspect, getProspects, updateProspect, getInvitesSentToday } from '
 import { sendInvitation, randomDelay } from '@/lib/unipile';
 
 export const dynamic = 'force-dynamic';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: corsHeaders });
+}
+
 export const maxDuration = 300; // 5 min — slow on purpose
 
 const MAX_INVITES_PER_DAY = 25; // Conservative safety limit
@@ -31,7 +42,7 @@ export async function POST(request: NextRequest) {
           ? 'Daily invite limit reached (' + sentToday + '/' + MAX_INVITES_PER_DAY + '). Try again tomorrow.'
           : 'No enriched prospects with messages ready to send.',
         sent_today: sentToday,
-      }, { status: 429 });
+      }, { status: 429, headers: corsHeaders });
     }
     
     toSend = toSend.slice(0, remaining);
@@ -82,9 +93,9 @@ export async function POST(request: NextRequest) {
       sent_today: sentToday + sent,
       daily_limit: MAX_INVITES_PER_DAY,
       results,
-    });
+    }, { headers: corsHeaders });
   } catch (error: any) {
     console.error('[Invite Error]', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
   }
 }

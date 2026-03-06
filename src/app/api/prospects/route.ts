@@ -3,6 +3,17 @@ import { getProspects, getProspectStats } from '@/lib/database';
 
 export const dynamic = 'force-dynamic';
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: corsHeaders });
+}
+
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -11,7 +22,7 @@ export async function GET(request: NextRequest) {
     
     if (statsOnly) {
       const stats = await getProspectStats();
-      return NextResponse.json({ stats });
+      return NextResponse.json({ stats }, { headers: corsHeaders });
     }
     
     const prospects = await getProspects(status || undefined);
@@ -23,9 +34,9 @@ export async function GET(request: NextRequest) {
       ),
       stats,
       total: prospects.length,
-    });
+    }, { headers: corsHeaders });
   } catch (error: any) {
     console.error('[Prospects GET]', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
   }
 }

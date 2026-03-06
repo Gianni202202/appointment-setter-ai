@@ -5,6 +5,17 @@ import { generateResponse } from '@/lib/claude';
 import { getConfigAsync } from '@/lib/database';
 
 export const dynamic = 'force-dynamic';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: corsHeaders });
+}
+
 export const maxDuration = 300; // 5 min — we process slowly on purpose
 
 const MAX_PER_REQUEST = 25; // Max 25 prospects per batch (like Elvatix)
@@ -15,7 +26,7 @@ export async function POST(request: NextRequest) {
     const { prospect_ids, instruction, maxCount = 25 } = body;
     
     if (!instruction) {
-      return NextResponse.json({ error: 'Provide an instruction for the connection message' }, { status: 400 });
+      return NextResponse.json({ error: 'Provide an instruction for the connection message' }, { status: 400, headers: corsHeaders });
     }
     
     // Get prospects to enrich
@@ -30,7 +41,7 @@ export async function POST(request: NextRequest) {
     toProcess = toProcess.slice(0, Math.min(maxCount, MAX_PER_REQUEST));
     
     if (toProcess.length === 0) {
-      return NextResponse.json({ success: true, processed: 0, message: 'No imported prospects to process' });
+      return NextResponse.json({ success: true, processed: 0, message: 'No imported prospects to process' }, { headers: corsHeaders });
     }
     
     const config = await getConfigAsync();
@@ -135,9 +146,9 @@ REGELS:
       failed: results.length - processed,
       total: toProcess.length,
       results,
-    });
+    }, { headers: corsHeaders });
   } catch (error: any) {
     console.error('[Enrich Error]', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
   }
 }

@@ -3,13 +3,24 @@ import { addProspectsBulk } from '@/lib/database';
 
 export const dynamic = 'force-dynamic';
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: corsHeaders });
+}
+
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { prospects } = body;
     
     if (!prospects || !Array.isArray(prospects) || prospects.length === 0) {
-      return NextResponse.json({ error: 'Provide prospects array' }, { status: 400 });
+      return NextResponse.json({ error: 'Provide prospects array' }, { status: 400, headers: corsHeaders });
     }
     
     // Validate and clean prospect data from Chrome extension
@@ -31,9 +42,9 @@ export async function POST(request: NextRequest) {
     
     const { added, skipped } = await addProspectsBulk(cleaned);
     
-    return NextResponse.json({ success: true, added, skipped, total: cleaned.length });
+    return NextResponse.json({ success: true, added, skipped, total: cleaned.length }, { headers: corsHeaders });
   } catch (error: any) {
     console.error('[Prospects Import]', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
   }
 }

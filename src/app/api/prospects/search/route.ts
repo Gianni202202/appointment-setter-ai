@@ -3,6 +3,17 @@ import { searchLinkedIn, searchResultToProspect } from '@/lib/unipile';
 import { addProspectsBulk, incrementSearchCount, getSearchesToday } from '@/lib/database';
 
 export const dynamic = 'force-dynamic';
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export async function OPTIONS() {
+  return NextResponse.json({}, { headers: corsHeaders });
+}
+
 export const maxDuration = 120;
 
 const MAX_PROFILES_PER_DAY = 2500;
@@ -13,7 +24,7 @@ export async function POST(request: NextRequest) {
     const { url, keywords, maxResults = 25 } = body;
     
     if (!url && !keywords) {
-      return NextResponse.json({ error: 'Provide url or keywords' }, { status: 400 });
+      return NextResponse.json({ error: 'Provide url or keywords' }, { status: 400, headers: corsHeaders });
     }
     
     // Check daily limit
@@ -59,9 +70,9 @@ export async function POST(request: NextRequest) {
       skipped,
       pages_loaded: pagesLoaded,
       has_more: !!cursor,
-    });
+    }, { headers: corsHeaders });
   } catch (error: any) {
     console.error('[Prospects Search]', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500, headers: corsHeaders });
   }
 }
