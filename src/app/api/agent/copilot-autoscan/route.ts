@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { generateResponse } from '@/lib/claude';
-import { getConfig, addDraft, getDrafts, getConversationPhase, logActivity, saveScanResults, getScanResults, getLastScanTime, updateScanResult, getRejectedChats } from '@/lib/database';
+import { getConfigAsync, addDraft, getDrafts, getConversationPhaseAsync, logActivity, saveScanResults, getScanResults, getLastScanTime, updateScanResult, getRejectedChats } from '@/lib/database';
 
 // Vercel function timeout — need 60s for Claude Opus calls
 export const maxDuration = 60;
@@ -277,7 +277,7 @@ async function scanChats(targetCount: number, cursor: string | null) {
 // PHASE 2: Generate draft for a single chat
 // =====================================================
 async function generateDraftForChat(chatId: string) {
-  const config = getConfig();
+  const config = await getConfigAsync();
 
   const msgsUrl = 'https://' + DSN + '/api/v1/chats/' + chatId + '/messages?limit=10';
   const msgsRes = await fetch(msgsUrl, {
@@ -323,7 +323,7 @@ async function generateDraftForChat(chatId: string) {
     }
   } catch {}
 
-  const storedPhase = getConversationPhase(chatId);
+  const storedPhase = await getConversationPhaseAsync(chatId);
   let state: any = messages.length <= 1 ? 'new' : 'engaged';
   if (storedPhase === 'weerstand') state = 'objection';
   if (storedPhase === 'call' || storedPhase === 'proof') state = 'qualified';

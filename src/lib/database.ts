@@ -348,6 +348,15 @@ export function getConversationPhase(chatId: string): string | undefined {
   return conversationPhases.get(chatId);
 }
 
+export async function getConversationPhaseAsync(chatId: string): Promise<string | undefined> {
+  // On cold start, restore from Redis
+  if (conversationPhases.size === 0) {
+    const stored = await rGet<Record<string, string>>('conv:phases', {});
+    Object.entries(stored).forEach(([k, v]) => conversationPhases.set(k, v));
+  }
+  return conversationPhases.get(chatId);
+}
+
 export function setConversationPhase(chatId: string, phase: string) {
   conversationPhases.set(chatId, phase);
   rSet('conv:phases', Object.fromEntries(conversationPhases));

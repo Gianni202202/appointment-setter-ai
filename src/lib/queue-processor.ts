@@ -1,4 +1,4 @@
-import { getDrafts, updateDraft, getSentTodayCount } from '@/lib/database';
+import { getDrafts, updateDraft, getSentTodayCount, logActivity } from '@/lib/database';
 import { sendMessage } from '@/lib/unipile';
 import { isWithinWorkingHours, getNextWorkingWindow, getDailyCapacity } from '@/lib/human-timing';
 
@@ -39,6 +39,7 @@ export async function processScheduledSends(): Promise<{ sent: number; skipped: 
     try {
       await sendMessage(draft.chat_id, draft.message);
       await updateDraft(draft.id, { status: 'sent', sent_at: new Date().toISOString() });
+      await logActivity('message_sent', draft.prospect_name || 'Unknown', { draft_id: draft.id, chat_id: draft.chat_id });
       console.log('[Queue] ✓ Sent:', draft.id, 'to', draft.prospect_name);
       sent++;
     } catch (err) {

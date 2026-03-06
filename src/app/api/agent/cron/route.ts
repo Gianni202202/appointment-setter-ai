@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAgentMode, getDrafts, updateDraft } from '@/lib/database';
+import { getAgentModeAsync, getDrafts, updateDraft } from '@/lib/database';
 import { processScheduledSends } from '@/lib/queue-processor';
 import { isWithinWorkingHours } from '@/lib/human-timing';
 
@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const mode = getAgentMode();
+  const mode = await getAgentModeAsync();
   const results: any = { mode, timestamp: new Date().toISOString() };
 
   // 1. ALWAYS process scheduled sends (regardless of mode)
