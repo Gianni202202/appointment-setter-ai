@@ -50,6 +50,9 @@ export default function Dashboard() {
   const [copilotMode, setCopilotMode] = useState<'manual' | 'autoscan'>('manual');
   const [autoScanning, setAutoScanning] = useState(false);
   const [autoScanResults, setAutoScanResults] = useState<any[]>([]);
+  const [scanLimit, setScanLimit] = useState(50);
+  const [scanProgress, setScanProgress] = useState('');
+  const [scanStats, setScanStats] = useState<{ scanned: number; found: number } | null>(null);
 
   // Sync
   const [syncing, setSyncing] = useState(false);
@@ -236,16 +239,43 @@ export default function Dashboard() {
   async function startCopilotAutoScan() {
     setAutoScanning(true);
     setAutoScanResults([]);
-    showToast('🚀 Copilot scant je inbox... dit duurt 30-60 seconden', 'info');
+    setScanProgress('🔍 Scanning starten...');
+    setScanStats(null);
 
-    const scanPromise = fetch('/api/agent/copilot-autoscan', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    }).then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setAutoScanResults(data.suggestions || []);
+    // Process in batches for progress visibility
+    const batchSize = 15;
+    const totalBatches = Math.ceil(scanLimit / batchSize);
+    let allSuggestions: any[] = [];
+    let totalScanned = 0;
+
+    const scanPromise = (async () => {
+      try {
+        for (let batch = 0; batch < totalBatches; batch++) {
+          const offset = batch * batchSize;
+          const limit = Math.min(batchSize, scanLimit - offset);
+          setScanProgress('🔍 Scanning chat ' + (offset + 1) + '-' + (offset + limit) + ' van ' + scanLimit + '...');
+
+          const res = await fetch('/api/agent/copilot-autoscan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ offset, limit, max_suggestions: 10 }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            totalScanned += data.total_chats_scanned || 0;
+            if (data.suggestions && data.suggestions.length > 0) {
+              allSuggestions = [...allSuggestions, ...data.suggestions];
+              setAutoScanResults([...allSuggestions]);
+            }
+            setScanStats({ scanned: totalScanned, found: allSuggestions.length });
+          }
+        }
+
+        setScanProgress('');
         setAutoScanning(false);
+
+        // Refresh drafts
         try {
           const qRes = await fetch('/api/agent/queue');
           if (qRes.ok) {
@@ -254,20 +284,20 @@ export default function Dashboard() {
             setSentToday(q.sent_today || 0);
           }
         } catch {}
+
         showToast(
-          data.suggestions_found > 0
-            ? '🎯 Copilot vond ' + data.suggestions_found + ' interessante chat' + (data.suggestions_found > 1 ? 's' : '') + ' — check hieronder'
-            : '✓ ' + data.total_chats_scanned + ' chats gescand — geen actie nodig',
-          data.suggestions_found > 0 ? 'success' : 'info'
+          allSuggestions.length > 0
+            ? '🎯 ' + totalScanned + ' chats gescand — ' + allSuggestions.length + ' interessante gevonden!'
+            : '✓ ' + totalScanned + ' chats gescand — geen actie nodig',
+          allSuggestions.length > 0 ? 'success' : 'info'
         );
-      } else {
+      } catch {
         setAutoScanning(false);
-        showToast('✕ Auto-scan failed', 'error');
+        setScanProgress('');
+        showToast('✕ Scan error', 'error');
       }
-    }).catch(() => {
-      setAutoScanning(false);
-      showToast('✕ Auto-scan error', 'error');
-    });
+    })();
+
     (window as any).__copilotScan = scanPromise;
   }
 
@@ -378,7 +408,12 @@ export default function Dashboard() {
     finally { setGenerating(false); setGeneratingProgress(''); }
   }
 
+  // Guard to prevent double-click / double-fire on draft actions
+  const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+
   async function handleDraftAction(draftId: string, action: 'approve' | 'reject') {
+    if (actionInProgress) return; // Prevent double-fire
+    setActionInProgress(draftId);
     try {
       const draft = drafts.find(d => d.id === draftId);
 
@@ -426,6 +461,7 @@ export default function Dashboard() {
 
       showToast(action === 'approve' ? '✓ Draft approved — go to Step 3 to send' : '✗ Draft removed', action === 'approve' ? 'success' : 'info');
     } catch (err) { showToast('Action failed: ' + err, 'error'); }
+    finally { setActionInProgress(null); }
   }
 
   async function sendApproved() {
@@ -642,21 +678,57 @@ export default function Dashboard() {
                       De Copilot scant je inbox en vindt chats met potentie
                     </p>
                   </div>
-                  <button
-                    className="btn-primary"
-                    onClick={startCopilotAutoScan}
-                    disabled={autoScanning}
-                    style={{ fontSize: '13px', padding: '10px 24px' }}
-                  >
-                    {autoScanning ? '⏳ Scanning...' : '🚀 Start Copilot Scan'}
-                  </button>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <select
+                      value={scanLimit}
+                      onChange={(e) => setScanLimit(Number(e.target.value))}
+                      disabled={autoScanning}
+                      style={{
+                        padding: '8px 12px', borderRadius: '8px', fontSize: '12px',
+                        background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)',
+                        border: '1px solid var(--border)', cursor: 'pointer',
+                      }}
+                    >
+                      <option value={25}>25 chats</option>
+                      <option value={50}>50 chats</option>
+                      <option value={100}>100 chats</option>
+                    </select>
+                    <button
+                      className="btn-primary"
+                      onClick={startCopilotAutoScan}
+                      disabled={autoScanning}
+                      style={{ fontSize: '13px', padding: '10px 24px' }}
+                    >
+                      {autoScanning ? '⏳ Scanning...' : '🚀 Start Copilot Scan'}
+                    </button>
+                  </div>
                 </div>
 
                 {autoScanning && (
-                  <div style={{ padding: '32px', textAlign: 'center' }}>
-                    <div className="spinner" style={{ margin: '0 auto 12px' }} />
-                    <div style={{ fontSize: '13px', color: 'var(--accent)' }}>🤖 Copilot scant je inbox en analyseert gesprekken...</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Dit duurt 30-60 seconden. Je kunt wegnavigeren — het draait door op de achtergrond.</div>
+                  <div style={{ padding: '24px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                      <div className="spinner" style={{ width: '20px', height: '20px', flexShrink: 0 }} />
+                      <div style={{ fontSize: '13px', color: 'var(--accent)', fontWeight: 600 }}>{scanProgress}</div>
+                    </div>
+                    {/* Progress bar */}
+                    <div style={{ height: '4px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden', marginBottom: '8px' }}>
+                      <div style={{
+                        height: '100%', borderRadius: '4px',
+                        background: 'linear-gradient(90deg, #3b82f6, #1d4ed8)',
+                        width: scanStats ? ((scanStats.scanned / scanLimit) * 100) + '%' : '10%',
+                        transition: 'width 0.5s ease',
+                      }} />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
+                      <span>{scanStats ? scanStats.scanned + '/' + scanLimit + ' gescand' : 'Starten...'}</span>
+                      <span>{scanStats && scanStats.found > 0 ? '🎯 ' + scanStats.found + ' interessant' : ''}</span>
+                    </div>
+                    {/* Show results streaming in as they come */}
+                    {autoScanResults.length > 0 && (
+                      <div style={{ marginTop: '12px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Eerste resultaten:
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -712,9 +784,27 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {!autoScanning && autoScanResults.length === 0 && (
+                {/* Scan stats summary */}
+                {!autoScanning && scanStats && (
+                  <div style={{
+                    padding: '10px 14px', borderRadius: '8px', marginBottom: '8px',
+                    background: 'rgba(59,130,246,0.06)', fontSize: '12px', color: 'var(--text-muted)',
+                    display: 'flex', justifyContent: 'space-between',
+                  }}>
+                    <span>📊 {scanStats.scanned} chats gescand</span>
+                    <span>🎯 {scanStats.found} interessant gevonden</span>
+                  </div>
+                )}
+
+                {!autoScanning && autoScanResults.length === 0 && !scanStats && (
                   <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
                     Klik op <strong>Start Copilot Scan</strong> om je inbox te laten analyseren
+                  </div>
+                )}
+
+                {!autoScanning && autoScanResults.length === 0 && scanStats && (
+                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    ✓ {scanStats.scanned} chats gescand — geen opvolging nodig op dit moment
                   </div>
                 )}
               </div>

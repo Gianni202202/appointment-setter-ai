@@ -6,14 +6,25 @@ const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
 const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
 
-export async function POST() {
+export async function POST(request: Request) {
   if (!DSN || !API_KEY || !ACCOUNT_ID) {
     return NextResponse.json({ error: 'Unipile not configured' }, { status: 400 });
   }
 
   try {
-    // Fetch only last 50 recent chats (respect LinkedIn limits)
-    const chatsUrl = 'https://' + DSN + '/api/v1/chats?account_id=' + ACCOUNT_ID + '&limit=50';
+    // Parse batch params
+    let offset = 0;
+    let limit = 15;
+    let maxSuggestions = 10;
+    try {
+      const body = await request.json();
+      offset = body.offset || 0;
+      limit = body.limit || 15;
+      maxSuggestions = body.max_suggestions || 10;
+    } catch {}
+
+    // Fetch chats with offset for batch processing
+    const chatsUrl = 'https://' + DSN + '/api/v1/chats?account_id=' + ACCOUNT_ID + '&limit=' + limit + '&offset=' + offset;
     const chatsRes = await fetch(chatsUrl, {
       headers: { 'X-API-KEY': API_KEY, Accept: 'application/json' },
       cache: 'no-store',
@@ -33,10 +44,10 @@ export async function POST() {
     const suggestions: any[] = [];
     let scannedCount = 0;
 
-    for (const chat of allChats.slice(0, 30)) {
+    for (const chat of allChats) {
       const chatId = chat.id;
       if (existingDraftChatIds.has(chatId)) continue;
-      if (suggestions.length >= 6) break; // Max 6 suggestions (less API calls)
+      if (suggestions.length >= maxSuggestions) break;
 
       try {
         const msgsUrl = 'https://' + DSN + '/api/v1/chats/' + chatId + '/messages?limit=10';
