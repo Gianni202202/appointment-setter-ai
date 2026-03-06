@@ -268,36 +268,72 @@ export default function Dashboard() {
         interesting.length > 0 ? 'success' : 'info'
       );
 
-      // Phase 2: Auto-generate drafts for interesting chats (sequentially, in background)
+      // Phase 2: Generate drafts for ALL interesting chats, one by one
       if (interesting.length > 0) {
-        for (const chat of interesting) {
+        let draftsMade = 0;
+        let draftsFailed = 0;
+
+        for (let idx = 0; idx < interesting.length; idx++) {
+          const chat = interesting[idx];
           setGeneratingForChat(chat.chat_id);
+          setScanProgress('✏️ Draft ' + (idx + 1) + '/' + interesting.length + ': ' + chat.name + '...');
+
           try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 55000); // 55s timeout client-side
+
             const genRes: Response = await fetch('/api/agent/copilot-autoscan', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ action: 'generate_draft', chat_id: chat.chat_id }),
+              signal: controller.signal,
             });
+            clearTimeout(timeoutId);
+
             if (genRes.ok) {
               const genData = await genRes.json();
-              if (genData.success) {
-                // Update results to show draft generated
+              if (genData.success && genData.draft) {
+                draftsMade++;
                 setScanResults(prev => prev.map(r =>
                   r.chat_id === chat.chat_id
                     ? { ...r, status: 'draft_ready', draft: genData.draft }
                     : r
                 ));
               } else {
+                draftsFailed++;
                 setScanResults(prev => prev.map(r =>
                   r.chat_id === chat.chat_id
-                    ? { ...r, status: 'draft_failed', reason: 'Kon geen draft maken' }
+                    ? { ...r, status: 'draft_failed', reason: 'AI kon geen draft genereren' }
                     : r
                 ));
               }
+            } else {
+              draftsFailed++;
+              setScanResults(prev => prev.map(r =>
+                r.chat_id === chat.chat_id
+                  ? { ...r, status: 'draft_failed', reason: 'Server error (' + genRes.status + ')' }
+                  : r
+              ));
             }
-          } catch {}
+          } catch (err: any) {
+            draftsFailed++;
+            const reason = err?.name === 'AbortError' ? 'Timeout (te lang)' : 'Verbindingsfout';
+            setScanResults(prev => prev.map(r =>
+              r.chat_id === chat.chat_id
+                ? { ...r, status: 'draft_failed', reason }
+                : r
+            ));
+          }
+
+          // Small delay between calls to avoid rate limiting
+          if (idx < interesting.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
         }
+
         setGeneratingForChat(null);
+        setScanProgress('');
+
         // Refresh drafts from server
         try {
           const qRes: Response = await fetch('/api/agent/queue');
@@ -307,7 +343,11 @@ export default function Dashboard() {
             setSentToday(q.sent_today || 0);
           }
         } catch {}
-        showToast('✓ Alle drafts klaar — check hieronder', 'success');
+
+        showToast(
+          '✓ ' + draftsMade + '/' + interesting.length + ' drafts gemaakt' + (draftsFailed > 0 ? ' (' + draftsFailed + ' gefaald)' : ''),
+          draftsMade > 0 ? 'success' : 'error'
+        );
       }
     } catch (err) {
       setAutoScanning(false);

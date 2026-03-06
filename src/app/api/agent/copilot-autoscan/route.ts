@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { generateResponse } from '@/lib/claude';
 import { getConfig, addDraft, getDrafts, getConversationPhase, logActivity } from '@/lib/database';
 
+// Vercel function timeout — need 60s for Claude Opus calls
+export const maxDuration = 60;
+
 const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
 const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
