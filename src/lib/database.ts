@@ -452,6 +452,32 @@ export async function getAllLabels(): Promise<ProspectLabel[]> {
   return rGet<ProspectLabel[]>('prospect:labels', []);
 }
 
+
+// ============================================
+// SCAN RESULTS CACHE — Redis persisted
+// ============================================
+export async function saveScanResults(results: any[]): Promise<void> {
+  await rSet('scan:last_results', results);
+  await rSet('scan:last_run', new Date().toISOString());
+}
+
+export async function getScanResults(): Promise<any[]> {
+  return rGet<any[]>('scan:last_results', []);
+}
+
+export async function getLastScanTime(): Promise<string | null> {
+  return rGet<string | null>('scan:last_run', null);
+}
+
+export async function updateScanResult(chatId: string, updates: any): Promise<void> {
+  const results = await rGet<any[]>('scan:last_results', []);
+  const idx = results.findIndex((r: any) => r.chat_id === chatId);
+  if (idx >= 0) {
+    Object.assign(results[idx], updates);
+    await rSet('scan:last_results', results);
+  }
+}
+
 // ============================================
 // REJECTED CHATS — Redis persisted
 // ============================================

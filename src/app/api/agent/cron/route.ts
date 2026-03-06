@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAgentMode, getDrafts } from '@/lib/database';
+import { getAgentMode, getDrafts, updateDraft } from '@/lib/database';
 import { processScheduledSends } from '@/lib/queue-processor';
 import { isWithinWorkingHours } from '@/lib/human-timing';
 
@@ -27,7 +27,23 @@ export async function GET(request: Request) {
   const sendResults = await processScheduledSends();
   results.sends = sendResults;
 
-  // 2. AUTO MODE: scan for new messages and generate drafts
+  // 2. RETRY FAILED DRAFTS (max 3 per cron run)
+  try {
+    const failedDrafts = (await getDrafts('failed')).slice(0, 3);
+    let retried = 0;
+    for (const draft of failedDrafts) {
+      await updateDraft(draft.id, {
+        status: 'approved',
+        scheduled_send_at: new Date(Date.now() + 60000).toISOString(),
+      });
+      retried++;
+    }
+    results.retries = { failed_found: failedDrafts.length, retried };
+  } catch (retryErr) {
+    results.retries = { error: String(retryErr) };
+  }
+
+  // 3. AUTO MODE: scan for new messages and generate drafts
   if (mode === 'auto' && DSN && API_KEY && ACCOUNT_ID) {
     if (!isWithinWorkingHours()) {
       results.auto = { skipped: true, reason: 'Outside working hours' };

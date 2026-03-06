@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { generateResponse } from '@/lib/claude';
-import { getConfig, addDraft, getDrafts, getConversationPhase, logActivity } from '@/lib/database';
+import { getConfig, addDraft, getDrafts, getConversationPhase, logActivity, saveScanResults, getScanResults, getLastScanTime, updateScanResult, getRejectedChats } from '@/lib/database';
 
 // Vercel function timeout — need 60s for Claude Opus calls
 export const maxDuration = 60;
@@ -19,6 +19,10 @@ async function scanChats(targetCount: number, cursor: string | null) {
   const results: any[] = [];
   let nextCursor = cursor;
   let fetched = 0;
+
+  // Get rejected chats to skip
+  const rejectedChats = await getRejectedChats();
+  const rejectedSet = new Set(rejectedChats);
 
   // Get existing drafts to mark
   const existingDrafts = await getDrafts();
@@ -61,6 +65,12 @@ async function scanChats(targetCount: number, cursor: string | null) {
           interest_score: 0,
           interest_reasons: [],
         });
+        continue;
+      }
+
+      // Skip rejected chats
+      if (rejectedSet.has(chatId)) {
+        results.push({ chat_id: chatId, name: chatName, status: 'rejected', reason: 'Eerder afgewezen', interest_score: 0, interest_reasons: [] });
         continue;
       }
 
@@ -376,6 +386,18 @@ export async function POST(request: Request) {
         interesting_count: interesting.length,
         results,
         next_cursor: nextCursor,
+      });
+    }
+
+    if (action === 'get_cached') {
+      const cached = await getScanResults();
+      const lastRun = await getLastScanTime();
+      return NextResponse.json({
+        total: cached.length,
+        interesting_count: cached.filter((r: any) => r.status === 'interesting').length,
+        results: cached,
+        last_scan: lastRun,
+        from_cache: true,
       });
     }
 
