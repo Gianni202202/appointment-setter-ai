@@ -47,6 +47,16 @@ export interface AgentConfig {
   rules: RulesConfig;
   blacklist: string[];
   best_practices: string;
+  strategies: Strategy[];
+}
+
+export interface Strategy {
+  id: string;
+  name: string;
+  scenario: 'connection_follow_up' | 're_engagement' | 'cold_outreach' | 'general';
+  template: string;
+  instruction: string;
+  active: boolean;
 }
 
 export interface ICPConfig {

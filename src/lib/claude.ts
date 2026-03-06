@@ -544,6 +544,33 @@ Voeg een extra veld toe aan je JSON response:
 }
 Vul alleen in wat je NIEUW leert uit het LAATSTE bericht van de prospect. Laat velden null als er niets nieuws is.`;
 
+  // === PROSPECT INFO + CONVERSATION CONTEXT ===
+  if (prospectInfo) {
+    systemPrompt = systemPrompt.replace(
+      '## PROSPECT INFO\n',
+      '## PROSPECT INFO\n' +
+      'Naam: ' + prospectInfo.name + '\n' +
+      (prospectInfo.headline ? 'Functie: ' + prospectInfo.headline + '\n' : '') +
+      (prospectInfo.company ? 'Bedrijf: ' + prospectInfo.company + '\n' : '')
+    );
+  } else {
+    systemPrompt = systemPrompt.replace(
+      '## PROSPECT INFO\n',
+      '## PROSPECT INFO\nGeen profieldata beschikbaar.\n'
+    );
+  }
+  // Explain who is who in conversation roles
+  const pName = prospectInfo?.name || 'de prospect';
+  const gName = config?.tone?.first_person_name || 'Gianni';
+  systemPrompt += `
+
+## GESPREKSCONTEXT
+In de conversatiehistorie hieronder:
+- Berichten met role "user" zijn van de PROSPECT (${pName}${prospectInfo?.headline ? ', ' + prospectInfo.headline : ''}${prospectInfo?.company ? ' bij ' + prospectInfo.company : ''}).
+- Berichten met role "model" zijn JOUW eerdere berichten als ${gName}.
+Elk bericht begint met [Naam]: zodat je weet wie het stuurde.
+Gebruik de naam van de prospect ("${pName}") om het gesprek persoonlijk te houden waar logisch.`;
+
   // === SELF-LEARNING: Inject performance data from previous drafts ===
   const learningBlock = await buildLearningPromptBlock();
   if (learningBlock) {
@@ -557,6 +584,24 @@ ${config.best_practices}
 `;
   }
 
+  // === STRATEGY TEMPLATES from settings ===
+  const strategies = config.strategies || [];
+  const activeStrategies = strategies.filter((s: any) => s.active && s.template);
+  if (activeStrategies.length > 0) {
+    systemPrompt += '\n\n## STRATEGIE TEMPLATES (door Gianni gedefinieerd)\n';
+    systemPrompt += 'Gebruik het relevante template als inspiratie voor je bericht.\n';
+    systemPrompt += 'Pas het ALTIJD aan op de specifieke prospect, hun context, en het stadium van het gesprek.\n';
+    systemPrompt += 'Kopieer NOOIT het template letterlijk — gebruik alleen de invalshoek en toon.\n\n';
+    for (const strat of activeStrategies) {
+      systemPrompt += '### ' + strat.name + ' (scenario: ' + strat.scenario + ')\n';
+      systemPrompt += 'Template:\n' + strat.template + '\n';
+      if (strat.instruction) {
+        systemPrompt += 'Instructie: ' + strat.instruction + '\n';
+      }
+      systemPrompt += '\n';
+    }
+  }
+
   // === CUSTOM INSTRUCTION from operator (via agent chat) ===
   if (customInstruction) {
     systemPrompt += `\n\n## OPERATOR INSTRUCTIE (PRIORITEIT)
@@ -567,9 +612,15 @@ Houd je verder aan alle andere regels.`;
   }
 
   // Build Gemini-formatted conversation history
+  // Add name labels so the model knows WHO sent each message
+  const prospectLabel = prospectInfo?.name || 'Prospect';
+  const agentLabel = config?.tone?.first_person_name || 'Gianni';
+
   let conversationHistory: { role: 'user' | 'model'; parts: { text: string }[] }[] = messages.map((m) => ({
     role: (m.role === 'prospect' ? 'user' : 'model') as 'user' | 'model',
-    parts: [{ text: m.content }],
+    parts: [{ text: m.role === 'prospect'
+      ? '[' + prospectLabel + ']: ' + m.content
+      : '[' + agentLabel + ']: ' + m.content }],
   }));
 
   // For connection-accept chats (only agent messages), prepend a user context message

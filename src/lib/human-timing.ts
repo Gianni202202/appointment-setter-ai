@@ -152,19 +152,19 @@ export function getNextWorkingWindow(): Date {
  * After a busy day (10+ messages sent yesterday), reduce today's capacity.
  */
 export function getDailyCapacity(sentYesterday: number, accountAgeWeeks?: number): number {
-  const baseCapacity = 15;
+  const baseCapacity = 125;
 
   // WARM-UP PERIOD: Ramp up capacity for new accounts
   let warmUpCap = baseCapacity;
   const weeks = accountAgeWeeks ?? 99;
-  if (weeks <= 0) warmUpCap = 5;      // Week 1: max 5/day
-  else if (weeks <= 1) warmUpCap = 8;  // Week 2: max 8/day
-  else if (weeks <= 2) warmUpCap = 12; // Week 3: max 12/day
+  if (weeks <= 0) warmUpCap = 30;      // Week 1: max 30/day
+  else if (weeks <= 1) warmUpCap = 60;  // Week 2: max 60/day
+  else if (weeks <= 2) warmUpCap = 90; // Week 3: max 90/day
 
   let limit = baseCapacity;
-  if (sentYesterday >= 12) {
-    limit = Math.ceil(baseCapacity * randomBetween(0.3, 0.5));
-  } else if (sentYesterday >= 8) {
+  if (sentYesterday >= 100) {
+    limit = Math.ceil(baseCapacity * randomBetween(0.5, 0.7));
+  } else if (sentYesterday >= 60) {
     limit = Math.ceil(baseCapacity * randomBetween(0.7, 0.9));
   }
 

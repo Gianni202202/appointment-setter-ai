@@ -53,6 +53,15 @@ export default function Dashboard() {
   const [scanLimit, setScanLimit] = useState(50);
   const [scanProgress, setScanProgress] = useState('');
   const [generatingForChat, setGeneratingForChat] = useState<string | null>(null);
+  const [scanNextCursor, setScanNextCursor] = useState<string | null>(null);
+
+  // Editable drafts
+  const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
+  const [editedMessages, setEditedMessages] = useState<Record<string, string>>({});
+
+  // Regenerate feedback
+  const [regenerateFeedbackId, setRegenerateFeedbackId] = useState<string | null>(null);
+  const [regenerateFeedback, setRegenerateFeedback] = useState('');
 
   // Sync
   const [syncing, setSyncing] = useState(false);
@@ -176,29 +185,45 @@ export default function Dashboard() {
     if (mode === 'copilot') loadCopilotChats();
   }, [mode, loadCopilotChats]);
 
+  // Guard to prevent double-click / double-fire on draft actions
+  const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+  const [regeneratingDraftId, setRegeneratingDraftId] = useState<string | null>(null);
+  const [rejectingDraftId, setRejectingDraftId] = useState<string | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+
   // Keep userBusyRef in sync with state (avoids stale closure in interval)
   useEffect(() => {
-    userBusyRef.current = !!(generating || autoScanning || actionInProgress || sendingBatch || rejectingDraftId);
+    userBusyRef.current = !!(generating || autoScanning || actionInProgress || sendingBatch || rejectingDraftId || regenerateFeedbackId || editingDraftId);
   });
 
-  // Auto-refresh drafts every 15s when active
-  // But skip refresh if user just took an action (prevents UI flash)
+  // Auto-refresh drafts every 30s when active
+  // Skip if user is editing, regenerating, or interacting
   useEffect(() => {
     if (mode === 'off') return;
     const interval = setInterval(async () => {
-      // Skip if generating, scanning, or any user action is in progress
+      // Skip if user is doing anything
       if (userBusyRef.current) return;
+      // Skip if user is editing a draft
+      if (editingDraftId) return;
+      // Skip if regenerate feedback modal is open
+      if (regenerateFeedbackId || rejectingDraftId) return;
       try {
         const res = await fetch('/api/agent/queue');
         if (res.ok) {
           const q = await res.json();
-          smartSetDrafts(q.drafts || []);
+          const serverDrafts: DraftMessage[] = q.drafts || [];
+          // Only update if drafts actually changed (prevent UI flash)
+          const currentIds = drafts.map(d => d.id + d.status + d.message).join('|');
+          const serverIds = serverDrafts.map((d: DraftMessage) => d.id + d.status + d.message).join('|');
+          if (currentIds !== serverIds) {
+            smartSetDrafts(serverDrafts);
+          }
           setSentToday(q.sent_today || 0);
         }
       } catch {}
-    }, 20000); // Increased to 20s to reduce flashing
+    }, 30000); // 30s to reduce flashing
     return () => clearInterval(interval);
-  }, [mode, generating, autoScanning]);
+  }, [mode, generating, autoScanning, editingDraftId, regenerateFeedbackId, rejectingDraftId]);
 
   async function changeMode(newMode: AgentMode) {
     if (newMode === 'auto') {
@@ -244,9 +269,9 @@ export default function Dashboard() {
     setSelectedChatIds(new Set());
   }
 
-  async function startCopilotAutoScan() {
+  async function startCopilotAutoScan(cursor?: string | null) {
     setAutoScanning(true);
-    setScanResults([]);
+    if (!cursor) setScanResults([]);
     setScanProgress('🔍 Chats ophalen uit LinkedIn...');
 
     try {
@@ -254,7 +279,7 @@ export default function Dashboard() {
       const scanRes: Response = await fetch('/api/agent/copilot-autoscan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'scan', target_count: scanLimit }),
+        body: JSON.stringify({ action: 'scan', target_count: scanLimit, cursor: cursor || undefined }),
       });
 
       if (!scanRes.ok) {
@@ -266,7 +291,8 @@ export default function Dashboard() {
 
       const data = await scanRes.json();
       const results = data.results || [];
-      setScanResults(results);
+      setScanResults(prev => cursor ? [...prev, ...results] : results);
+      setScanNextCursor(data.next_cursor || null);
       setScanProgress('');
       setAutoScanning(false);
 
@@ -427,48 +453,90 @@ export default function Dashboard() {
     setLoadingConversation(null);
   }
 
-  async function regenerateDraft(draftId: string, chatId: string) {
+  // Regenerate with feedback — show modal first
+  function startRegenerate(draftId: string) {
+    setRegenerateFeedbackId(draftId);
+    setRegenerateFeedback('');
+  }
+
+  function cancelRegenerate() {
+    setRegenerateFeedbackId(null);
+    setRegenerateFeedback('');
+  }
+
+  async function confirmRegenerate() {
+    const draftId = regenerateFeedbackId;
+    if (!draftId) return;
+    const draft = drafts.find(d => d.id === draftId);
+    if (!draft) return;
+    
+    const feedback = regenerateFeedback.trim();
+    setRegenerateFeedbackId(null);
+    setRegenerateFeedback('');
     setRegeneratingDraftId(draftId);
 
     try {
-      // Remove old draft on server — records learning data with "Regenerated" reason
+      // Record feedback for learning (reject old with feedback)
       await fetch('/api/agent/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ draft_id: draftId, action: 'reject', rejection_reason: 'Regenerated — bericht opnieuw gegenereerd' }),
+        body: JSON.stringify({
+          draft_id: draftId,
+          action: 'reject',
+          rejection_reason: 'Regenerated' + (feedback ? ': ' + feedback : ''),
+        }),
       });
 
-      // Small delay
-      await new Promise(r => setTimeout(r, 300));
-
-      // Generate new draft for this chat
-      const res = await fetch('/api/agent/copilot-scan', {
+      // Generate new draft — passes feedback as custom instruction
+      const res = await fetch('/api/agent/copilot-autoscan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_ids: [chatId] }),
+        body: JSON.stringify({ action: 'generate_draft', chat_id: draft.chat_id }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        // Refresh from server to get the new draft (replaces old one)
+        if (data.success && data.draft) {
+          // In-place replacement — same position, new content
+          setDrafts(prev => {
+            const idx = prev.findIndex(d => d.id === draftId);
+            if (idx === -1) return prev;
+            const updated = [...prev];
+            updated[idx] = {
+              ...updated[idx],
+              id: data.draft.draft_id || updated[idx].id,
+              message: data.draft.message,
+              reasoning: data.draft.reasoning || '',
+              phase: data.draft.phase || updated[idx].phase,
+              status: 'pending',
+            };
+            saveDraftsToLocal(updated);
+            return updated;
+          });
+          showToast('✓ Draft opnieuw gegenereerd', 'success');
+        } else {
+          showToast('⚠️ Kon geen nieuw draft maken — probeer opnieuw', 'error');
+        }
+      } else {
+        showToast('✕ Regeneratie mislukt', 'error');
+      }
+      // Also refresh from server to sync properly
+      try {
         const qRes = await fetch('/api/agent/queue');
         if (qRes.ok) {
           const q = await qRes.json();
           smartSetDrafts(q.drafts || []);
         }
-        showToast(data.drafts_created > 0 ? '✓ Draft opnieuw gegenereerd' : '⚠️ Kon geen nieuw draft maken — probeer nogmaals', data.drafts_created > 0 ? 'success' : 'error');
-      } else {
-        showToast('✕ Regeneratie mislukt — probeer nogmaals', 'error');
-      }
+      } catch {}
     } catch (err) { showToast('✕ Error: ' + err, 'error'); }
     finally { setRegeneratingDraftId(null); }
   }
 
-  // Guard to prevent double-click / double-fire on draft actions
-  const [actionInProgress, setActionInProgress] = useState<string | null>(null);
-  const [regeneratingDraftId, setRegeneratingDraftId] = useState<string | null>(null);
-  const [rejectingDraftId, setRejectingDraftId] = useState<string | null>(null);
-  const [rejectionReason, setRejectionReason] = useState('');
+  // Legacy alias for backwards compat
+  async function regenerateDraft(draftId: string, _chatId: string) {
+    startRegenerate(draftId);
+  }
+
 
   async function handleDraftAction(draftId: string, action: 'approve' | 'reject', reason?: string) {
     if (actionInProgress) return; // Prevent double-fire
@@ -756,7 +824,7 @@ export default function Dashboard() {
                     </select>
                     <button
                       className="btn-primary"
-                      onClick={startCopilotAutoScan}
+                      onClick={() => startCopilotAutoScan()}
                       disabled={autoScanning}
                       style={{ fontSize: '13px', padding: '10px 24px' }}
                     >
@@ -835,6 +903,43 @@ export default function Dashboard() {
                             )}
                           </div>
 
+                          {/* Manual draft button for maybe/low-scored chats */}
+                          {(r.status === 'maybe' || r.status === 'not_interesting') && r.interest_score > 0 && !generatingForChat && (
+                            <button
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                setGeneratingForChat(r.chat_id);
+                                try {
+                                  const genRes = await fetch('/api/agent/copilot-autoscan', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ action: 'generate_draft', chat_id: r.chat_id }),
+                                  });
+                                  if (genRes.ok) {
+                                    const genData = await genRes.json();
+                                    if (genData.success) {
+                                      setScanResults(prev => prev.map(sr => sr.chat_id === r.chat_id ? { ...sr, status: 'draft_ready', draft: genData.draft } : sr));
+                                      // Refresh drafts
+                                      const qRes = await fetch('/api/agent/queue');
+                                      if (qRes.ok) { const q = await qRes.json(); smartSetDrafts(q.drafts || []); }
+                                      showToast('✓ Draft gemaakt voor ' + r.name, 'success');
+                                    } else {
+                                      showToast('Kon geen draft maken voor ' + r.name, 'error');
+                                    }
+                                  }
+                                } catch { showToast('Error bij draft genereren', 'error'); }
+                                finally { setGeneratingForChat(null); }
+                              }}
+                              style={{
+                                padding: '3px 10px', borderRadius: '8px', fontSize: '10px', fontWeight: 600,
+                                background: 'rgba(59,130,246,0.1)', color: 'var(--accent)',
+                                border: '1px solid rgba(59,130,246,0.2)', cursor: 'pointer', flexShrink: 0,
+                              }}
+                            >
+                              ➕ Draft
+                            </button>
+                          )}
+
                           {/* Interest score badge */}
                           {r.interest_score > 0 && (
                             <span style={{
@@ -849,8 +954,20 @@ export default function Dashboard() {
                       ))}
                     </div>
                     {!autoScanning && !generatingForChat && (
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', padding: '8px 0', textAlign: 'center' }}>
-                        ↓ Drafts staan klaar in Step 2 hieronder — beoordeel en keur goed
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', padding: '8px 0', textAlign: 'center', display: 'flex', justifyContent: 'center', gap: '12px', alignItems: 'center' }}>
+                        <span>↓ Drafts staan klaar in Step 2 hieronder — beoordeel en keur goed</span>
+                        {scanNextCursor && (
+                          <button
+                            onClick={() => startCopilotAutoScan(scanNextCursor)}
+                            style={{
+                              padding: '4px 14px', borderRadius: '8px', fontSize: '11px', fontWeight: 600,
+                              background: 'rgba(59,130,246,0.15)', color: 'var(--accent)',
+                              border: '1px solid rgba(59,130,246,0.2)', cursor: 'pointer',
+                            }}
+                          >
+                            📥 Scan volgende {scanLimit}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1013,14 +1130,32 @@ export default function Dashboard() {
                             </span>
                           )}
                         </div>
-                        <div style={{
-                          fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.6',
-                          padding: '10px 14px', borderRadius: '10px',
-                          background: 'rgba(255,255,255,0.03)',
-                          whiteSpace: 'pre-wrap',
-                        }}>
-                          {draft.message}
-                        </div>
+                        {editingDraftId === draft.id ? (
+                          <textarea
+                            value={editedMessages[draft.id] ?? draft.message}
+                            onChange={(e) => setEditedMessages(prev => ({ ...prev, [draft.id]: e.target.value }))}
+                            style={{
+                              fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.6',
+                              padding: '10px 14px', borderRadius: '10px', width: '100%',
+                              background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.3)',
+                              resize: 'vertical', minHeight: '80px', fontFamily: 'inherit',
+                            }}
+                          />
+                        ) : (
+                          <div
+                            onClick={() => { if (draft.status === 'pending') { setEditingDraftId(draft.id); setEditedMessages(prev => ({ ...prev, [draft.id]: draft.message })); } }}
+                            style={{
+                              fontSize: '13px', color: 'var(--text-secondary)', lineHeight: '1.6',
+                              padding: '10px 14px', borderRadius: '10px', cursor: draft.status === 'pending' ? 'text' : 'default',
+                              background: 'rgba(255,255,255,0.03)',
+                              whiteSpace: 'pre-wrap',
+                            }}
+                            title={draft.status === 'pending' ? 'Klik om te bewerken' : ''}
+                          >
+                            {editedMessages[draft.id] || draft.message}
+                            {draft.status === 'pending' && <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginLeft: '8px' }}>✏️</span>}
+                          </div>
+                        )}
                         <button
                           onClick={() => toggleConversation(draft.id, draft.chat_id)}
                           style={{
@@ -1075,22 +1210,65 @@ export default function Dashboard() {
                       </div>
                       {draft.status === 'pending' && (
                         <div style={{ display: 'flex', gap: '6px', flexShrink: 0, flexDirection: 'column' }}>
-                          <button
-                            className="btn-success"
-                            onClick={() => handleDraftAction(draft.id, 'approve')}
-                            style={{ padding: '8px 16px', fontSize: '12px' }}
-                            title="Approve this draft — it will NOT be sent yet. You send in Step 3."
-                          >
-                            ✓ Approve Draft
-                          </button>
+                          {editingDraftId === draft.id ? (
+                            <>
+                              <button
+                                className="btn-success"
+                                onClick={async () => {
+                                  const edited = editedMessages[draft.id];
+                                  if (edited && edited !== draft.message) {
+                                    // Save edit to server
+                                    await fetch('/api/agent/queue', {
+                                      method: 'POST',
+                                      headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ draft_id: draft.id, action: 'edit', message: edited }),
+                                    });
+                                    setDrafts(prev => prev.map(d => d.id === draft.id ? { ...d, message: edited } : d));
+                                  }
+                                  setEditingDraftId(null);
+                                  showToast('✓ Bericht opgeslagen', 'success');
+                                }}
+                                style={{ padding: '8px 16px', fontSize: '12px' }}
+                              >
+                                💾 Opslaan
+                              </button>
+                              <button
+                                className="btn-secondary"
+                                onClick={() => { setEditingDraftId(null); setEditedMessages(prev => { const n = {...prev}; delete n[draft.id]; return n; }); }}
+                                style={{ padding: '8px 16px', fontSize: '12px' }}
+                              >
+                                ✕ Annuleren
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="btn-success"
+                              onClick={() => {
+                                const edited = editedMessages[draft.id];
+                                handleDraftAction(draft.id, 'approve');
+                                // If user edited the message, save it first
+                                if (edited && edited !== draft.message) {
+                                  fetch('/api/agent/queue', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ draft_id: draft.id, action: 'edit', message: edited }),
+                                  });
+                                }
+                              }}
+                              style={{ padding: '8px 16px', fontSize: '12px' }}
+                              title="Approve this draft — it will NOT be sent yet. You send in Step 3."
+                            >
+                              ✓ Approve Draft
+                            </button>
+                          )}
                           <button
                             className="btn-secondary"
-                            onClick={() => regenerateDraft(draft.id, draft.chat_id)}
+                            onClick={() => startRegenerate(draft.id)}
                             disabled={generating || regeneratingDraftId !== null}
                             style={{ padding: '8px 16px', fontSize: '12px', color: 'var(--accent)' }}
                             title="Generate a new draft for this conversation"
                           >
-                            🔄 Regenerate
+                            {regeneratingDraftId === draft.id ? '⏳ Bezig...' : '🔄 Regenerate'}
                           </button>
                           <button
                             className="btn-secondary"
@@ -1137,6 +1315,83 @@ export default function Dashboard() {
             </div>
           )}
         </>
+      )}
+
+      {/* Regenerate Feedback Modal */}
+      {regenerateFeedbackId && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={cancelRegenerate}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            background: 'var(--bg-card)', borderRadius: '16px', padding: '24px', width: '90%', maxWidth: '440px',
+            border: '1px solid var(--border)', boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+          }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px' }}>🔄 Waarom opnieuw genereren?</h3>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+              Je feedback helpt de AI betere berichten te schrijven. (optioneel)
+            </p>
+            <textarea
+              value={regenerateFeedback}
+              onChange={(e) => setRegenerateFeedback(e.target.value)}
+              placeholder="Bijv: te formeel, te lang, verkeerde toon, mist personalisatie..."
+              style={{
+                width: '100%', minHeight: '80px', padding: '10px', borderRadius: '10px',
+                background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)',
+                color: 'var(--text-primary)', fontSize: '13px', resize: 'vertical', fontFamily: 'inherit',
+              }}
+              autoFocus
+            />
+            <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end' }}>
+              <button className="btn-secondary" onClick={cancelRegenerate} style={{ padding: '8px 16px', fontSize: '12px' }}>
+                Annuleren
+              </button>
+              <button className="btn-primary" onClick={confirmRegenerate} style={{ padding: '8px 16px', fontSize: '12px' }}>
+                🔄 Opnieuw genereren
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Rejection Feedback Modal */}
+      {rejectingDraftId && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 10000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+        }} onClick={cancelReject}>
+          <div onClick={(e) => e.stopPropagation()} style={{
+            background: 'var(--bg-card)', borderRadius: '16px', padding: '24px', width: '90%', maxWidth: '440px',
+            border: '1px solid var(--border)', boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+          }}>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '12px' }}>✕ Draft verwijderen</h3>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '12px' }}>
+              Waarom wil je dit bericht verwijderen? (optioneel — helpt de AI leren)
+            </p>
+            <textarea
+              value={rejectionReason}
+              onChange={(e) => setRejectionReason(e.target.value)}
+              placeholder="Bijv: niet relevant, verkeerde prospect, gesprek al afgelopen..."
+              style={{
+                width: '100%', minHeight: '80px', padding: '10px', borderRadius: '10px',
+                background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)',
+                color: 'var(--text-primary)', fontSize: '13px', resize: 'vertical', fontFamily: 'inherit',
+              }}
+              autoFocus
+            />
+            <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end' }}>
+              <button className="btn-secondary" onClick={cancelReject} style={{ padding: '8px 16px', fontSize: '12px' }}>
+                Annuleren
+              </button>
+              <button onClick={confirmReject} style={{
+                padding: '8px 16px', fontSize: '12px', borderRadius: '10px', border: 'none', cursor: 'pointer',
+                background: 'rgba(239,68,68,0.15)', color: 'var(--danger)', fontWeight: 600,
+              }}>
+                ✕ Verwijderen
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* ==================== AUTO MODE ==================== */}

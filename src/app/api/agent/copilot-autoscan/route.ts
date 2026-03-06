@@ -51,7 +51,17 @@ async function scanChats(targetCount: number, cursor: string | null) {
     if (chats.length === 0) break;
 
     for (const chat of chats) {
-      const chatName = chat.name || chat.title || 'Unknown';
+      // Try to get name from attendees (LinkedIn DMs often have empty name/title)
+      let chatName = chat.name || chat.title || '';
+      if (!chatName || chatName === 'Unknown') {
+        const attendees = chat.attendees || [];
+        for (const att of attendees) {
+          if (att.is_me) continue;
+          chatName = att.display_name || att.name || att.first_name || '';
+          if (chatName) break;
+        }
+      }
+      if (!chatName) chatName = 'Unknown';
       const chatNameLower = chatName.toLowerCase();
       const chatId = chat.id;
 
@@ -213,6 +223,34 @@ async function scanChats(targetCount: number, cursor: string | null) {
         if (avgLen > 100 && prospectMsgs.length > 0) {
           interestScore += 1;
           interestReasons.push('Uitgebreide berichten');
+        }
+
+        // ─── FILTER: Sales pitches (people selling TO you) ───
+        const allProspectText = prospectMsgs.map((m: any) => m.content.toLowerCase()).join(' ');
+        const SALES_PATTERNS = [
+          'book a call', 'schedule a meeting', 'raising capital', 'schedule a demo',
+          'interested in our', 'reach out to', 'reaching out to', 'i\'d love to connect',
+          'partnership opportunity', 'investment opportunity', 'our platform',
+          'we help companies', 'we\'ve worked with', 'we specialize', 'our services',
+          'bel inplannen', 'demo inplannen', 'onze diensten', 'wij helpen',
+        ];
+        const isSalesPitch = SALES_PATTERNS.some(p => allProspectText.includes(p)) && turns <= 2;
+        if (isSalesPitch) {
+          interestScore = Math.max(interestScore - 3, 1);
+          interestReasons.push('⚠️ Prospect probeert iets te verkopen');
+        }
+
+        // ─── FILTER: Closed/finished conversations ───
+        const lastMsgText = lastMsg.content.toLowerCase().trim();
+        const CLOSED_PATTERNS = [
+          'bedankt', 'dank je', 'thanks', 'thank you', 'top, dank', 'fijn bedankt',
+          'succes', 'tot zover', 'geen interesse', 'not interested', 'no thanks',
+          'nee bedankt', 'niet nodig', 'geen behoefte',
+        ];
+        const isClosedConvo = CLOSED_PATTERNS.some(p => lastMsgText.startsWith(p)) && lastMsg.role === 'prospect';
+        if (isClosedConvo) {
+          interestScore = Math.max(interestScore - 3, 0);
+          interestReasons.push('⚠️ Gesprek lijkt afgesloten');
         }
 
         // ─── STATUS ───

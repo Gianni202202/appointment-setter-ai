@@ -86,6 +86,7 @@ const defaultConfig: AgentConfig = {
   },
   blacklist: [],
   best_practices: '',
+  strategies: [],
 };
 
 let agentConfig: AgentConfig = { ...defaultConfig };

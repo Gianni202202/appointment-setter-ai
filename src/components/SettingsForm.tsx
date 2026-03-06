@@ -31,6 +31,7 @@ interface AgentConfig {
   };
   blacklist: string[];
   best_practices: string;
+  strategies: { id: string; name: string; scenario: string; template: string; instruction: string; active: boolean }[];
 }
 
 interface SettingsFormProps {
@@ -52,6 +53,32 @@ export default function SettingsForm({ initialConfig }: SettingsFormProps) {
 
   function updateRules(key: string, value: unknown) {
     setConfig(prev => ({ ...prev, rules: { ...prev.rules, [key]: value } }));
+  }
+
+  function addStrategy() {
+    const id = 'strat_' + Date.now();
+    setConfig(prev => ({
+      ...prev,
+      strategies: [...(prev.strategies || []), {
+        id, name: '', scenario: 'connection_follow_up',
+        template: '', instruction: 'Gebruik de invalshoek en toon uit dit template als inspiratie, maar pas het aan op de prospect en hun context. Maak het kort en persoonlijk.',
+        active: true,
+      }],
+    }));
+  }
+
+  function updateStrategy(id: string, key: string, value: unknown) {
+    setConfig(prev => ({
+      ...prev,
+      strategies: (prev.strategies || []).map(s => s.id === id ? { ...s, [key]: value } : s),
+    }));
+  }
+
+  function removeStrategy(id: string) {
+    setConfig(prev => ({
+      ...prev,
+      strategies: (prev.strategies || []).filter(s => s.id !== id),
+    }));
   }
 
   async function saveSettings() {
@@ -279,6 +306,89 @@ export default function SettingsForm({ initialConfig }: SettingsFormProps) {
             onChange={e => setConfig(prev => ({ ...prev, best_practices: e.target.value }))}
             style={{ resize: 'vertical' }}
           />
+        </div>
+
+        {/* Strategy Templates */}
+        <div className="glass-card" style={{ padding: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <div>
+              <h2 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '4px' }}>
+                🎯 Strategie Templates
+              </h2>
+              <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                Definieer invalshoeken per scenario. De AI gebruikt het template als inspiratie en past het aan per prospect.
+              </p>
+            </div>
+            <button className="btn-secondary" onClick={addStrategy} style={{ fontSize: '12px', padding: '6px 14px' }}>
+              + Strategie
+            </button>
+          </div>
+
+          {(config.strategies || []).length === 0 ? (
+            <p style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', padding: '20px' }}>
+              Nog geen strategieën. Klik &quot;+ Strategie&quot; om er een toe te voegen.
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {(config.strategies || []).map(strat => (
+                <div key={strat.id} style={{
+                  padding: '16px', borderRadius: '12px',
+                  border: strat.active ? '1px solid rgba(59,130,246,0.3)' : '1px solid var(--border)',
+                  background: strat.active ? 'rgba(59,130,246,0.05)' : 'rgba(255,255,255,0.02)',
+                }}>
+                  <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', alignItems: 'center' }}>
+                    <input
+                      className="input-field"
+                      placeholder="Naam (bijv. Connectie opvolging)"
+                      value={strat.name}
+                      onChange={e => updateStrategy(strat.id, 'name', e.target.value)}
+                      style={{ flex: 1, fontSize: '13px' }}
+                    />
+                    <select
+                      className="input-field"
+                      value={strat.scenario}
+                      onChange={e => updateStrategy(strat.id, 'scenario', e.target.value)}
+                      style={{ width: '180px', fontSize: '12px' }}
+                    >
+                      <option value="connection_follow_up">Connectie opvolging</option>
+                      <option value="re_engagement">Re-engagement</option>
+                      <option value="cold_outreach">Cold outreach</option>
+                      <option value="general">Algemeen</option>
+                    </select>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      <input
+                        type="checkbox"
+                        checked={strat.active}
+                        onChange={e => updateStrategy(strat.id, 'active', e.target.checked)}
+                      />
+                      Actief
+                    </label>
+                    <button
+                      onClick={() => removeStrategy(strat.id)}
+                      style={{ background: 'none', border: 'none', color: 'var(--error)', cursor: 'pointer', fontSize: '16px', padding: '4px' }}
+                      title="Verwijderen"
+                    >✕</button>
+                  </div>
+                  <textarea
+                    className="input-field"
+                    rows={6}
+                    placeholder="Template bericht (gebruik {{Naam}} en {{LINK}} als placeholders)..."
+                    value={strat.template}
+                    onChange={e => updateStrategy(strat.id, 'template', e.target.value)}
+                    style={{ resize: 'vertical', fontSize: '12px', marginBottom: '8px' }}
+                  />
+                  <textarea
+                    className="input-field"
+                    rows={2}
+                    placeholder="Instructie voor de AI (hoe moet dit template gebruikt worden?)"
+                    value={strat.instruction}
+                    onChange={e => updateStrategy(strat.id, 'instruction', e.target.value)}
+                    style={{ resize: 'vertical', fontSize: '12px' }}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Blacklist */}
