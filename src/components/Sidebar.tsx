@@ -6,27 +6,22 @@ import { useState, useEffect } from 'react';
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const [agentActive, setAgentActive] = useState(false);
-  const [linkedInConnected, setLinkedInConnected] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [agentMode, setAgentMode] = useState('off');
+  const [queueCount, setQueueCount] = useState(0);
 
   useEffect(() => {
-    fetch('/api/agent/toggle')
-      .then(res => res.json())
-      .then(data => setAgentActive(data.enabled))
-      .catch(() => setAgentActive(false));
-
-    fetch('/api/unipile/status')
-      .then(res => res.json())
-      .then(data => setLinkedInConnected(data.connected))
-      .catch(() => setLinkedInConnected(false));
-  }, []);
-
-  useEffect(() => {
-    fetch('/api/agent/toggle')
-      .then(res => res.json())
-      .then(data => setAgentActive(data.enabled))
+    fetch('/api/agent/mode')
+      .then(r => r.json())
+      .then(d => setAgentMode(d.mode || 'off'))
+      .catch(() => {});
+    fetch('/api/agent/queue?status=pending')
+      .then(r => r.json())
+      .then(d => setQueueCount(d.counts?.pending || 0))
       .catch(() => {});
   }, [pathname]);
+
+  useEffect(() => { setMobileOpen(false); }, [pathname]);
 
   const links = [
     { href: '/', label: 'Dashboard', icon: (
@@ -50,74 +45,91 @@ export default function Sidebar() {
     )},
   ];
 
+  const modeColors: Record<string, string> = {
+    auto: 'var(--success)',
+    copilot: 'var(--accent)',
+    off: 'var(--text-muted)',
+  };
+
+  const modeLabels: Record<string, string> = {
+    auto: 'Auto Mode',
+    copilot: 'Copilot Mode',
+    off: 'Agent Off',
+  };
+
   return (
-    <nav className="sidebar">
-      <div style={{ marginBottom: '32px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '0 16px' }}>
-          <div style={{
-            width: '36px', height: '36px', borderRadius: '10px',
-            background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontWeight: 800, fontSize: '16px'
-          }}>
-            AI
-          </div>
-          <div>
-            <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-primary)' }}>
-              AppointmentAI
+    <>
+      <button className="hamburger-btn" onClick={() => setMobileOpen(!mobileOpen)}>
+        {mobileOpen ? '✕' : '☰'}
+      </button>
+
+      <div
+        className={`sidebar-overlay ${mobileOpen ? 'open' : ''}`}
+        onClick={() => setMobileOpen(false)}
+      />
+
+      <nav className={`sidebar ${mobileOpen ? 'open' : ''}`}>
+        <div style={{ marginBottom: '32px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '0 16px' }}>
+            <div style={{
+              width: '36px', height: '36px', borderRadius: '10px',
+              background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontWeight: 800, fontSize: '16px'
+            }}>
+              AI
             </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-              LinkedIn DM Agent
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-primary)' }}>
+                AppointmentAI
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                LinkedIn DM Agent
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {links.map(link => {
-        const isActive = link.href === '/'
-          ? pathname === '/'
-          : pathname.startsWith(link.href);
+        {links.map(link => {
+          const isActive = link.href === '/' ? pathname === '/' : pathname.startsWith(link.href);
+          return (
+            <Link key={link.href} href={link.href} className={`sidebar-link ${isActive ? 'active' : ''}`}>
+              {link.icon}
+              <span style={{ flex: 1 }}>{link.label}</span>
+              {link.href === '/' && queueCount > 0 && (
+                <span className="badge badge-warning">{queueCount}</span>
+              )}
+            </Link>
+          );
+        })}
 
-        return (
-          <Link
-            key={link.href}
-            href={link.href}
-            className={`sidebar-link ${isActive ? 'active' : ''}`}
-          >
-            {link.icon}
-            {link.label}
-          </Link>
-        );
-      })}
+        <div style={{ flex: 1 }} />
 
-      <div style={{ flex: 1 }} />
-
-      <div style={{
-        padding: '16px',
-        background: 'var(--bg-card)',
-        borderRadius: '12px',
-        border: '1px solid var(--border)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-          <div style={{
-            width: '8px', height: '8px', borderRadius: '50%',
-            background: agentActive ? 'var(--success)' : 'var(--danger)',
-            ...(agentActive ? { animation: 'pulse 2s infinite' } : {}),
-          }} />
-          <span style={{
-            fontSize: '12px', fontWeight: 600,
-            color: agentActive ? 'var(--success)' : 'var(--danger)',
-          }}>
-            Agent {agentActive ? 'Active' : 'Inactive'}
-          </span>
+        <div style={{
+          padding: '14px 16px',
+          background: 'var(--bg-card)',
+          borderRadius: '12px',
+          border: '1px solid var(--border)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+            <div style={{
+              width: '8px', height: '8px', borderRadius: '50%',
+              background: modeColors[agentMode] || 'var(--text-muted)',
+            }} className={agentMode !== 'off' ? 'pulse-live' : ''} />
+            <span style={{
+              fontSize: '12px', fontWeight: 600,
+              color: modeColors[agentMode] || 'var(--text-muted)',
+            }}>
+              {modeLabels[agentMode] || 'Unknown'}
+            </span>
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+            {agentMode === 'auto' && 'Responding automatically'}
+            {agentMode === 'copilot' && `${queueCount} drafts pending review`}
+            {agentMode === 'off' && 'No automatic responses'}
+          </div>
         </div>
-        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-          {linkedInConnected
-            ? (agentActive ? 'Responding to messages' : 'LinkedIn connected · Agent paused')
-            : 'LinkedIn not connected'
-          }
-        </div>
-      </div>
-    </nav>
+      </nav>
+    </>
   );
 }

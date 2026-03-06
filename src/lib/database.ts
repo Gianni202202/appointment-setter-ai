@@ -1,4 +1,4 @@
-import { Conversation, Message, AgentConfig, ConversationState, DashboardMetrics } from '@/types';
+import {Conversation, Message, AgentConfig, ConversationState, DashboardMetrics, AgentMode, DraftMessage} from '@/types';
 
 // ============================================
 // In-Memory Database (replace with Supabase later)
@@ -207,4 +207,57 @@ export function getMetrics(): DashboardMetrics {
     avg_response_time_minutes: 0,
     conversations_by_state: stateCount,
   };
+}
+
+// ============================================
+// Agent Mode (auto | copilot | off)
+// ============================================
+let agentMode: AgentMode = 'off';
+
+export function getAgentMode(): AgentMode { return agentMode; }
+export function setAgentMode(mode: AgentMode) { agentMode = mode; }
+
+// ============================================
+// Draft Queue (for Copilot mode)
+// ============================================
+const draftQueue: DraftMessage[] = [];
+let draftCounter = 0;
+
+export function addDraft(draft: Omit<DraftMessage, 'id' | 'status' | 'created_at'>): DraftMessage {
+  const newDraft: DraftMessage = {
+    ...draft,
+    id: 'draft_' + (++draftCounter) + '_' + Date.now(),
+    status: 'pending',
+    created_at: new Date().toISOString(),
+  };
+  draftQueue.push(newDraft);
+  return newDraft;
+}
+
+export function getDrafts(status?: string): DraftMessage[] {
+  if (status) return draftQueue.filter(d => d.status === status);
+  return [...draftQueue];
+}
+
+export function getDraft(id: string): DraftMessage | undefined {
+  return draftQueue.find(d => d.id === id);
+}
+
+export function updateDraft(id: string, updates: Partial<DraftMessage>): DraftMessage | null {
+  const draft = draftQueue.find(d => d.id === id);
+  if (!draft) return null;
+  Object.assign(draft, updates);
+  return draft;
+}
+
+export function removeDraft(id: string): boolean {
+  const idx = draftQueue.findIndex(d => d.id === id);
+  if (idx === -1) return false;
+  draftQueue.splice(idx, 1);
+  return true;
+}
+
+export function getSentTodayCount(): number {
+  const today = new Date().toISOString().split('T')[0];
+  return draftQueue.filter(d => d.status === 'sent' && d.sent_at?.startsWith(today)).length;
 }

@@ -141,3 +141,26 @@ export interface DashboardMetrics {
   avg_response_time_minutes: number;
   conversations_by_state: Record<ConversationState, number>;
 }
+
+// ============================================
+// Agent Mode Types
+// ============================================
+
+export type AgentMode = 'auto' | 'copilot' | 'off';
+
+export interface DraftMessage {
+  id: string;
+  chat_id: string;
+  prospect_name: string;
+  prospect_headline?: string;
+  message: string;
+  reasoning: string;
+  phase?: string;
+  confidence?: string;
+  created_at: string;
+  prospect_msg_received_at?: string;
+  status: 'pending' | 'approved' | 'rejected' | 'sent' | 'failed';
+  approved_at?: string;
+  scheduled_send_at?: string;
+  sent_at?: string;
+}
