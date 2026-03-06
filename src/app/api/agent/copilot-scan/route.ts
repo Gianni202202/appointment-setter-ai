@@ -170,19 +170,30 @@ export async function POST(request: Request) {
  * GET — List all chats that need attention (last message from prospect).
  * Used by the dashboard to show selectable conversations.
  */
-export async function GET() {
+/**
+ * GET — List all chats that need attention (last message from prospect).
+ * Robust: checks multiple Unipile field formats for sender detection.
+ */
+export async function GET(request: Request) {
   try {
     if (!DSN || !API_KEY || !ACCOUNT_ID) {
       return NextResponse.json({ error: 'Unipile not configured' }, { status: 400 });
     }
 
-    const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=50`, {
+    const { searchParams } = new URL(request.url);
+    const maxAgeDays = parseInt(searchParams.get('max_age_days') || '30');
+    const cutoffDate = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
+
+    // Fetch chats with higher limit (matching conversations route)
+    const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=250`, {
       headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
       cache: 'no-store',
     });
 
     if (!chatsRes.ok) {
-      return NextResponse.json({ error: 'Failed to fetch chats' }, { status: 500 });
+      const errText = await chatsRes.text();
+      console.error('[Copilot Scan GET] Unipile error:', errText);
+      return NextResponse.json({ error: 'Failed to fetch chats from LinkedIn' }, { status: 500 });
     }
 
     const chatsData = await chatsRes.json();
@@ -198,42 +209,56 @@ export async function GET() {
     for (const chat of chats) {
       if (chat.account_id && chat.account_id !== ACCOUNT_ID) continue;
 
-      // Extract prospect name
-      let prospectName = chat.name || 'Unknown';
+      // Extract prospect name from attendees
+      let prospectName = 'LinkedIn Contact';
       if (chat.attendees && Array.isArray(chat.attendees)) {
         for (const a of chat.attendees) {
-          if (!a.is_me) {
-            prospectName = a.display_name || a.name || a.identifier || prospectName;
-            break;
-          }
+          if (a.is_me) continue;
+          prospectName = a.display_name || a.name || a.identifier || prospectName;
+          break;
         }
+      }
+      if (prospectName === 'LinkedIn Contact' && chat.name) {
+        prospectName = chat.name;
       }
 
       const lastMsg = chat.last_message;
-      const isFromProspect = lastMsg && !lastMsg.is_sender;
+      const msgDate = lastMsg?.timestamp ? new Date(lastMsg.timestamp) : 
+                      chat.last_message_at ? new Date(chat.last_message_at) :
+                      chat.updated_at ? new Date(chat.updated_at) : null;
+
+      // Skip chats older than cutoff
+      if (msgDate && msgDate < cutoffDate) continue;
+
+      // Robust sender check: try multiple Unipile field formats
+      const isSentByMe = lastMsg ? (
+        lastMsg.is_sender === true || 
+        lastMsg.sender?.is_me === true ||
+        lastMsg.sender_id === ACCOUNT_ID
+      ) : true; // If no last message info, assume no action needed
+
       const hasDraft = existingDraftChatIds.has(chat.id);
 
+      const chatItem = {
+        chat_id: chat.id,
+        prospect_name: prospectName,
+        last_message_preview: lastMsg?.text?.substring(0, 100) || chat.last_message_text?.substring(0, 100) || '',
+        last_message_at: lastMsg?.timestamp || chat.last_message_at || chat.updated_at || '',
+        has_draft: hasDraft,
+      };
+
       if (hasDraft) {
-        alreadyHasDraft.push({
-          chat_id: chat.id,
-          prospect_name: prospectName,
-          last_message_preview: lastMsg?.text?.substring(0, 100) || '',
-          last_message_at: lastMsg?.timestamp || chat.updated_at || '',
-          has_draft: true,
-        });
-      } else if (isFromProspect) {
-        needsAttention.push({
-          chat_id: chat.id,
-          prospect_name: prospectName,
-          last_message_preview: lastMsg?.text?.substring(0, 100) || '',
-          last_message_at: lastMsg?.timestamp || chat.updated_at || '',
-          has_draft: false,
-        });
+        alreadyHasDraft.push(chatItem);
+      } else if (!isSentByMe && lastMsg?.text) {
+        // Last message is from prospect and has content
+        needsAttention.push(chatItem);
       }
     }
 
     // Sort by most recent first
-    needsAttention.sort((a: any, b: any) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime());
+    needsAttention.sort((a: any, b: any) => 
+      new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime()
+    );
 
     return NextResponse.json({
       needs_attention: needsAttention,

@@ -383,3 +383,49 @@ export function getAccountAgeWeeks(): number {
   const ageMs = Date.now() - new Date(accountActivatedAt).getTime();
   return Math.floor(ageMs / (7 * 24 * 60 * 60 * 1000));
 }
+
+// ============================================
+// Agent Chat History (in-dashboard conversation)
+// ============================================
+
+interface AgentChatMessage {
+  role: 'user' | 'agent';
+  content: string;
+  timestamp: string;
+  actions?: { type: string; result?: string }[];
+}
+
+let agentChatHistory: AgentChatMessage[] = [];
+
+let agentScanSettings: {
+  maxAgeDays: number;
+  phases: string[];
+  limit: number;
+  autoSend: boolean;
+} = {
+  maxAgeDays: 30,
+  phases: [],
+  limit: 20,
+  autoSend: false,
+};
+
+export function getAgentChatHistory(): AgentChatMessage[] {
+  return agentChatHistory.slice(-30);
+}
+
+export function addAgentChatMessage(msg: AgentChatMessage) {
+  agentChatHistory.push(msg);
+  if (agentChatHistory.length > 50) agentChatHistory = agentChatHistory.slice(-30);
+}
+
+export function clearAgentChatHistory() {
+  agentChatHistory = [];
+}
+
+export function getAgentScanSettings() {
+  return { ...agentScanSettings };
+}
+
+export function updateAgentScanSettings(updates: Partial<typeof agentScanSettings>) {
+  agentScanSettings = { ...agentScanSettings, ...updates };
+}

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import AgentChat from '@/components/AgentChat';
 
 type AgentMode = 'auto' | 'copilot' | 'off';
 
@@ -258,6 +259,7 @@ export default function Dashboard() {
   }
 
   return (
+    <>
     <div style={{ maxWidth: '1100px' }}>
       {/* Toast notification */}
       {toast && (
@@ -620,5 +622,12 @@ export default function Dashboard() {
         </div>
       </div>
     </div>
+
+      {/* Agent Chat Interface */}
+      <AgentChat
+        onModeChange={(m) => { setMode(m as AgentMode); }}
+        onRefreshDashboard={loadAll}
+      />
+    </>
   );
 }
