@@ -1,7 +1,8 @@
 import { UnipileChat, UnipileMessage, Prospect } from '@/types';
 
 
-const UNIPILE_DSN = process.env.UNIPILE_DSN || '';
+const RAW_DSN = process.env.UNIPILE_DSN || '';
+const UNIPILE_DSN = RAW_DSN.startsWith('http') ? RAW_DSN : ('https://' + RAW_DSN);
 const UNIPILE_API_KEY = process.env.UNIPILE_API_KEY || '';
 const UNIPILE_ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
 
