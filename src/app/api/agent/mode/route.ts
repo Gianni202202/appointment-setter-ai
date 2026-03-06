@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { getAgentMode, setAgentMode } from '@/lib/database';
+import { getAgentMode, getAgentModeAsync, setAgentMode } from '@/lib/database';
 import type { AgentMode } from '@/types';
 
 export async function GET() {
-  return NextResponse.json({ mode: getAgentMode() });
+  return NextResponse.json({ mode: await getAgentModeAsync() });
 }
 
 export async function PUT(request: Request) {

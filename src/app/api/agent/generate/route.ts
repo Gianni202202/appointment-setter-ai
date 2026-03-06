@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { generateResponse, LegendaryContext } from '@/lib/claude';
-import { getConfig, getConversationMemory, updateConversationMemory, addPreviousOpener, getPreviousOpeners, getConversationPhase, setConversationPhase } from '@/lib/database';
+import { getConfigAsync, getConversationMemoryAsync, updateConversationMemory, addPreviousOpener, getPreviousOpenersAsync, getConversationPhaseAsync, setConversationPhase } from '@/lib/database';
 
 // Pro plan: allow up to 60s execution
 export const maxDuration = 60;
@@ -105,7 +105,7 @@ export async function POST(request: Request) {
 
     // 4. Determine conversation state
     let state: any = 'new';
-    const storedPhase = getConversationPhase(chat_id);
+    const storedPhase = await getConversationPhaseAsync(chat_id);
     if (messages.length === 0) {
       state = 'new';
     } else if (storedPhase === 'weerstand') {
@@ -119,8 +119,8 @@ export async function POST(request: Request) {
     }
 
     // 5. Build legendary context
-    const memory = getConversationMemory(chat_id);
-    const previousOpeners = getPreviousOpeners(chat_id);
+    const memory = await getConversationMemoryAsync(chat_id);
+    const previousOpeners = await getPreviousOpenersAsync(chat_id);
 
     // Calculate CET hour
     const now = new Date();
@@ -136,7 +136,7 @@ export async function POST(request: Request) {
     };
 
     // 6. Generate AI response via Claude (with legendary context)
-    const config = getConfig();
+    const config = await getConfigAsync();
     const aiResponse = await generateResponse(
       config,
       state,

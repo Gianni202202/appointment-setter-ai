@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { generateResponse, LegendaryContext } from '@/lib/claude';
-import { getConfig, addDraft, getDrafts, getConversationMemory, getPreviousOpeners, getConversationPhase, setConversationPhase, addPreviousOpener, updateConversationMemory } from '@/lib/database';
+import { getConfigAsync, addDraft, getDrafts, getConversationMemoryAsync, getPreviousOpenersAsync, getConversationPhaseAsync, setConversationPhase, addPreviousOpener, updateConversationMemory } from '@/lib/database';
 
 // Pro plan: allow up to 60s execution
 export const maxDuration = 60;
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
       });
     }
 
-    const config = getConfig();
+    const config = await getConfigAsync();
     const results: { chat_id: string; prospect: string; status: string; message?: string }[] = [];
 
     for (const chatId of toProcess.slice(0, 25)) { // Process up to 25 chats per batch
@@ -117,13 +117,13 @@ export async function POST(request: Request) {
         }
 
         // 3. Build state & legendary context
-        const storedPhase = getConversationPhase(chatId);
+        const storedPhase = await getConversationPhaseAsync(chatId);
         let state: any = messages.length === 0 ? 'new' : 'engaged';
         if (storedPhase === 'weerstand') state = 'objection';
         if (storedPhase === 'call' || storedPhase === 'proof') state = 'qualified';
 
-        const memory = getConversationMemory(chatId);
-        const previousOpeners = getPreviousOpeners(chatId);
+        const memory = await getConversationMemoryAsync(chatId);
+        const previousOpeners = await getPreviousOpenersAsync(chatId);
         const now = new Date();
         const cetHour = (now.getUTCHours() + 1) % 24;
 

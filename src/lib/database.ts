@@ -307,6 +307,15 @@ export function getConversationMemory(chatId: string): ConversationMemory | unde
   return conversationMemories.get(chatId);
 }
 
+export async function getConversationMemoryAsync(chatId: string): Promise<ConversationMemory | undefined> {
+  // On cold start, restore from Redis
+  if (conversationMemories.size === 0) {
+    const stored = await rGet<Record<string, ConversationMemory>>('conv:memories', {});
+    Object.entries(stored).forEach(([k, v]) => conversationMemories.set(k, v));
+  }
+  return conversationMemories.get(chatId);
+}
+
 export function updateConversationMemory(chatId: string, updates: Partial<ConversationMemory['facts']>) {
   const existing = conversationMemories.get(chatId);
   if (existing) {
@@ -336,6 +345,14 @@ export function addPreviousOpener(chatId: string, opener: string) {
 }
 
 export function getPreviousOpeners(chatId: string): string[] {
+  return conversationMemories.get(chatId)?.previous_openers || [];
+}
+
+export async function getPreviousOpenersAsync(chatId: string): Promise<string[]> {
+  if (conversationMemories.size === 0) {
+    const stored = await rGet<Record<string, ConversationMemory>>('conv:memories', {});
+    Object.entries(stored).forEach(([k, v]) => conversationMemories.set(k, v));
+  }
   return conversationMemories.get(chatId)?.previous_openers || [];
 }
 
@@ -394,14 +411,21 @@ let agentChatHistory: AgentChatMessage[] = [];
 let agentScanSettings = { maxAgeDays: 30, phases: [] as string[], limit: 20, autoSend: false };
 
 export function getAgentChatHistory() { return agentChatHistory.slice(-30); }
+export async function getAgentChatHistoryAsync() {
+  const stored = await rGet<AgentChatMessage[]>('agent:chatHistory', []);
+  if (stored.length > 0 && agentChatHistory.length === 0) agentChatHistory = stored;
+  return agentChatHistory.slice(-30);
+}
 export function addAgentChatMessage(msg: AgentChatMessage) {
   agentChatHistory.push(msg);
   if (agentChatHistory.length > 50) agentChatHistory = agentChatHistory.slice(-30);
+  rSet('agent:chatHistory', agentChatHistory);
 }
 export function clearAgentChatHistory() { agentChatHistory = []; }
 export function getAgentScanSettings() { return { ...agentScanSettings }; }
 export function updateAgentScanSettings(updates: Partial<typeof agentScanSettings>) {
   agentScanSettings = { ...agentScanSettings, ...updates };
+  rSet('agent:scanSettings', agentScanSettings);
 }
 
 // ============================================

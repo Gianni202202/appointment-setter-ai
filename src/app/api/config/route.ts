@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
-import { getConfig, updateConfig } from '@/lib/database';
+import { getConfig, getConfigAsync, updateConfig } from '@/lib/database';
 
 export async function GET() {
-  return NextResponse.json(getConfig());
+  return NextResponse.json(await getConfigAsync());
 }
 
 export async function PUT(request: Request) {

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import {
-  getAgentMode, setAgentMode,
+  getAgentMode, getAgentModeAsync, setAgentMode,
   getAgentChatHistory, addAgentChatMessage,
   getAgentScanSettings, updateAgentScanSettings,
   getDrafts, getSentTodayCount,
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
       timestamp: new Date().toISOString(),
     });
 
-    const mode = getAgentMode();
+    const mode = await getAgentModeAsync();
     const drafts = await getDrafts();
     const pendingDrafts = drafts.filter(d => d.status === 'pending');
     const approvedDrafts = drafts.filter(d => d.status === 'approved');
