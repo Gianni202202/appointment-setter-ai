@@ -56,7 +56,8 @@ export async function POST(request: Request) {
 
     // Send via Unipile (only if DSN and API key are set)
     let unipileSent = false;
-    if (process.env.UNIPILE_DSN && process.env.UNIPILE_API_KEY && aiResponse.should_respond) {
+    // SAFETY: Only auto-send if AI says should_respond AND NOT flagged for human review
+    if (process.env.UNIPILE_DSN && process.env.UNIPILE_API_KEY && aiResponse.should_respond && !aiResponse.needs_human) {
       try {
         await sendMessage(conversation.unipile_chat_id, aiResponse.message);
         unipileSent = true;
