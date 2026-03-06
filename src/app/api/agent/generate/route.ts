@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { generateResponse } from '@/lib/claude';
-import { getConfig } from '@/lib/database';
+import { generateResponse, LegendaryContext } from '@/lib/claude';
+import { getConfig, getConversationMemory, updateConversationMemory, addPreviousOpener, getPreviousOpeners, getConversationPhase, setConversationPhase } from '@/lib/database';
 
 const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
@@ -9,8 +9,7 @@ const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
 
 /**
  * AI Copilot — Generate a response draft WITHOUT sending.
- * Fetches the conversation directly from Unipile so it works
- * without an in-memory database.
+ * Now with LEGENDARY features: style mirroring, warmth curve, memory, phase detection.
  */
 export async function POST(request: Request) {
   try {
@@ -70,7 +69,6 @@ export async function POST(request: Request) {
       const msgsData = await msgsRes.json();
       const rawMsgs = msgsData.items || msgsData || [];
 
-      // Sort by timestamp (oldest first)
       rawMsgs.sort((a: any, b: any) =>
         new Date(a.timestamp || a.date || 0).getTime() - new Date(b.timestamp || b.date || 0).getTime()
       );
@@ -85,14 +83,13 @@ export async function POST(request: Request) {
 
     // 3. Check if ANTHROPIC_API_KEY is set
     if (!ANTHROPIC_KEY) {
-      // Return a smart mock response based on the conversation
       const lastProspectMsg = messages.filter(m => m.role === 'prospect').pop();
       return NextResponse.json({
         draft: {
           message: lastProspectMsg
-            ? `Thanks for your message, ${prospectName.split(' ')[0]}. [AI KEY NOT CONFIGURED — set ANTHROPIC_API_KEY in Vercel to get real AI responses]`
-            : `Hey ${prospectName.split(' ')[0]}, I noticed your profile and wanted to connect. [AI KEY NOT CONFIGURED — set ANTHROPIC_API_KEY in Vercel]`,
-          reasoning: 'ANTHROPIC_API_KEY is not set. Add it to your Vercel environment variables to enable real AI-generated responses.',
+            ? `Thanks for your message, ${prospectName.split(' ')[0]}. [AI KEY NOT CONFIGURED]`
+            : `Hey ${prospectName.split(' ')[0]}, [AI KEY NOT CONFIGURED]`,
+          reasoning: 'ANTHROPIC_API_KEY is not set.',
           sentiment: 'neutral',
           needs_human: false,
           should_respond: true,
@@ -103,17 +100,39 @@ export async function POST(request: Request) {
       });
     }
 
-    // 4. Determine conversation state from messages
+    // 4. Determine conversation state
     let state: any = 'new';
+    const storedPhase = getConversationPhase(chat_id);
     if (messages.length === 0) {
       state = 'new';
+    } else if (storedPhase === 'weerstand') {
+      state = 'objection';
+    } else if (storedPhase === 'call' || storedPhase === 'proof') {
+      state = 'qualified';
     } else if (messages.length <= 2) {
       state = 'engaged';
     } else {
-      state = 'engaged'; // Let AI figure out the nuance
+      state = 'engaged';
     }
 
-    // 5. Generate AI response via Claude
+    // 5. Build legendary context
+    const memory = getConversationMemory(chat_id);
+    const previousOpeners = getPreviousOpeners(chat_id);
+
+    // Calculate CET hour
+    const now = new Date();
+    const cetOffset = 1; // CET = UTC+1 (adjust for CEST if needed)
+    const cetHour = (now.getUTCHours() + cetOffset) % 24;
+
+    const legendaryContext: LegendaryContext = {
+      messageCount: messages.length,
+      previousOpeners,
+      conversationMemory: memory?.facts || null,
+      detectedPhase: storedPhase || null,
+      currentHourCET: cetHour,
+    };
+
+    // 6. Generate AI response via Claude (with legendary context)
     const config = getConfig();
     const aiResponse = await generateResponse(
       config,
@@ -123,8 +142,40 @@ export async function POST(request: Request) {
         conversation_id: chat_id,
         is_read: true,
       })),
-      { name: prospectName, headline: prospectHeadline, company: prospectCompany }
+      { name: prospectName, headline: prospectHeadline, company: prospectCompany },
+      legendaryContext
     );
+
+    // 7. Post-generation: store phase and memory
+    if (aiResponse.phase) {
+      setConversationPhase(chat_id, aiResponse.phase);
+    }
+
+    // Store opener for variance tracking
+    if (aiResponse.message) {
+      const opener = aiResponse.message.split('\n')[0].substring(0, 60);
+      addPreviousOpener(chat_id, opener);
+    }
+
+    // Extract and store conversation memory facts from AI response
+    // The AI returns extracted_facts in its JSON — we parse it from the raw response
+    try {
+      const rawResponse = aiResponse as any;
+      if (rawResponse.extracted_facts) {
+        const facts = rawResponse.extracted_facts;
+        const updates: any = {};
+        if (facts.team_size) updates.team_size = facts.team_size;
+        if (facts.role) updates.role = facts.role;
+        if (facts.company) updates.company = facts.company;
+        if (facts.language_preference) updates.language_preference = facts.language_preference;
+        if (facts.tools_mentioned?.length) updates.tools_mentioned = facts.tools_mentioned;
+        if (facts.pain_points?.length) updates.pain_points = facts.pain_points;
+        if (facts.interests?.length) updates.interests = facts.interests;
+        if (Object.keys(updates).length > 0) {
+          updateConversationMemory(chat_id, updates);
+        }
+      }
+    } catch {}
 
     return NextResponse.json({
       draft: {
@@ -135,10 +186,14 @@ export async function POST(request: Request) {
         should_respond: aiResponse.should_respond,
         has_objection: aiResponse.has_objection,
         objection_type: aiResponse.objection_type,
+        phase: aiResponse.phase,
+        mini_ja_seeking: aiResponse.mini_ja_seeking,
+        confidence: aiResponse.confidence,
       },
       prospect: { name: prospectName, headline: prospectHeadline, company: prospectCompany },
       message_count: messages.length,
       state,
+      stored_phase: storedPhase,
       api_key_configured: true,
     });
   } catch (error) {

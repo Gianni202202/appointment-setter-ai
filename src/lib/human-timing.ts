@@ -151,17 +151,24 @@ export function getNextWorkingWindow(): Date {
  * GOLDEN NUGGET #7: Determine if today should be a "cooling off" day.
  * After a busy day (10+ messages sent yesterday), reduce today's capacity.
  */
-export function getDailyCapacity(sentYesterday: number): number {
+export function getDailyCapacity(sentYesterday: number, accountAgeWeeks?: number): number {
   const baseCapacity = 15;
+
+  // WARM-UP PERIOD: Ramp up capacity for new accounts
+  let warmUpCap = baseCapacity;
+  const weeks = accountAgeWeeks ?? 99;
+  if (weeks <= 0) warmUpCap = 5;      // Week 1: max 5/day
+  else if (weeks <= 1) warmUpCap = 8;  // Week 2: max 8/day
+  else if (weeks <= 2) warmUpCap = 12; // Week 3: max 12/day
+
+  let limit = baseCapacity;
   if (sentYesterday >= 12) {
-    // Busy yesterday — cool off today (50-70% capacity)
-    return Math.ceil(baseCapacity * randomBetween(0.3, 0.5));
+    limit = Math.ceil(baseCapacity * randomBetween(0.3, 0.5));
+  } else if (sentYesterday >= 8) {
+    limit = Math.ceil(baseCapacity * randomBetween(0.7, 0.9));
   }
-  if (sentYesterday >= 8) {
-    // Moderate yesterday — slightly reduced (70-90%)
-    return Math.ceil(baseCapacity * randomBetween(0.7, 0.9));
-  }
-  return baseCapacity;
+
+  return Math.max(3, Math.min(limit, warmUpCap));
 }
 
 /**

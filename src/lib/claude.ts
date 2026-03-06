@@ -344,13 +344,168 @@ export interface ClaudeResponse {
   reason_for_no_response?: string;
 }
 
+// ============================================
+// LEGENDARY FEATURES — Style Analysis & Context
+// ============================================
+
+export interface LegendaryContext {
+  messageCount: number;
+  previousOpeners: string[];
+  conversationMemory: {
+    team_size?: string;
+    tools_mentioned?: string[];
+    pain_points?: string[];
+    interests?: string[];
+    role?: string;
+    company?: string;
+    language_preference?: string;
+    custom_notes?: string[];
+  } | null;
+  detectedPhase: string | null;
+  currentHourCET: number;
+}
+
+function analyzeProspectStyle(messages: Message[]): string {
+  const prospectMsgs = messages.filter(m => m.role === 'prospect').map(m => m.content);
+  if (prospectMsgs.length === 0) return '';
+
+  const lastMsgs = prospectMsgs.slice(-3);
+  const avgLength = Math.round(lastMsgs.reduce((sum, m) => sum + m.length, 0) / lastMsgs.length);
+  const hasEmoji = lastMsgs.some(m => /[\u2600-\u27BF]/.test(m) || /\p{Emoji}/u.test(m));
+  const isShort = avgLength < 80;
+  const isInformal = lastMsgs.some(m => /\b(hey|hoi|hi|haha|nice|top|cool|ja|yep|nee|nope)\b/i.test(m));
+  const isFormal = lastMsgs.some(m => /\b(Geachte|Beste|Met vriendelijke groet|Regards|Sincerely)\b/.test(m));
+  const usesExclamation = lastMsgs.some(m => m.includes('!'));
+  const usesLowercase = lastMsgs.some(m => m[0] && m[0] === m[0].toLowerCase());
+
+  let style = '## STIJL-SPIEGEL INSTRUCTIE (Mirror Prospect Style)\n';
+  style += 'Analyseer de stijl van de prospect en match het:\n';
+
+  if (isFormal) {
+    style += '- Prospect schrijft FORMEEL. Gebruik professionele toon, complete zinnen.\n';
+  } else if (isInformal) {
+    style += '- Prospect schrijft INFORMEEL. Gebruik casual toon, kort en direct.\n';
+  }
+
+  if (isShort) {
+    style += '- Prospect schrijft KORT (gem. ' + avgLength + ' tekens). Houd je antwoord ook kort.\n';
+  } else {
+    style += '- Prospect schrijft UITGEBREID (gem. ' + avgLength + ' tekens). Je mag iets langer antwoorden.\n';
+  }
+
+  if (hasEmoji) {
+    style += '- Prospect gebruikt emoji. Je mag ook 1 emoji gebruiken.\n';
+  } else {
+    style += '- Prospect gebruikt GEEN emoji. Gebruik ook geen emoji.\n';
+  }
+
+  if (usesExclamation) {
+    style += '- Prospect gebruikt uitroeptekens. Je mag ook iets enthousiaaster schrijven.\n';
+  }
+
+  if (usesLowercase) {
+    style += '- Prospect begint zinnen met kleine letter. Jij mag dat ook.\n';
+  }
+
+  return style;
+}
+
+function buildWarmthCurveInstructions(messageCount: number): string {
+  if (messageCount <= 2) {
+    return `## WARMTH CURVE — Bericht #${messageCount} (PROFESSIONEEL)
+Toon: professioneel, volledig, beleefd. Complete zinnen. Geen emoji tenzij prospect ze gebruikt.
+Aanspreking: "Ha [naam]," of "Hey [naam],".`;
+  } else if (messageCount <= 4) {
+    return `## WARMTH CURVE — Bericht #${messageCount} (CASUAL)
+Toon: iets losser, korter. Je mag afkortingen gebruiken. 1 emoji ok als het past.
+Je kent de prospect nu een beetje — verwijs terug naar eerdere punten.`;
+  } else if (messageCount <= 6) {
+    return `## WARMTH CURVE — Bericht #${messageCount} (WARM)
+Toon: casual, alsof je een bekende appt. Korte zinnen. Emoji mag.
+Gebruik "jij/je" in plaats van formeel. Verwijs naar eerdere gesprekspunten.`;
+  } else {
+    return `## WARMTH CURVE — Bericht #${messageCount} (HEEL CASUAL)
+Toon: alsof je een collega een appje stuurt. Ultra kort. Informeel.
+Skip formele openings. Spring meteen in het onderwerp.`;
+  }
+}
+
+function buildTimeOfDayTone(hourCET: number): string {
+  if (hourCET >= 8 && hourCET < 11) {
+    return `## TIJDSTIP-TOON — Ochtend (${hourCET}:00 CET)
+Schrijf iets energieker. Proactief. "Goeiemorgen!" mag als opener.`;
+  } else if (hourCET >= 11 && hourCET < 14) {
+    return `## TIJDSTIP-TOON — Middag (${hourCET}:00 CET)
+Normaal tempo. Gebalanceerd.`;
+  } else if (hourCET >= 14 && hourCET < 17) {
+    return `## TIJDSTIP-TOON — Namiddag (${hourCET}:00 CET)
+Schrijf korter en directer. Efficiency-modus. Mensen zijn druk.`;
+  } else {
+    return `## TIJDSTIP-TOON — Avond (${hourCET}:00 CET)
+Schrijf warmer, meer relaxed. "Nog even…" of "Snel tussendoor…" als opener mag.`;
+  }
+}
+
+function buildMessageVarianceInstructions(previousOpeners: string[]): string {
+  if (previousOpeners.length === 0) return '';
+  return `## BERICHT-VARIANTIE
+Je VORIGE openers in dit gesprek waren:
+${previousOpeners.map((o, i) => (i + 1) + '. "' + o.substring(0, 50) + '..."').join('\n')}
+VERPLICHT: Gebruik een ANDERE opener dan bovenstaande. Varieer je stijl.`;
+}
+
+function buildConversationMemoryContext(memory: LegendaryContext['conversationMemory']): string {
+  if (!memory) return '';
+  const parts: string[] = ['## CONVERSATION MEMORY — Eerder geleerde feiten over deze prospect:'];
+  if (memory.team_size) parts.push('- Teamgrootte: ' + memory.team_size);
+  if (memory.role) parts.push('- Rol: ' + memory.role);
+  if (memory.company) parts.push('- Bedrijf: ' + memory.company);
+  if (memory.tools_mentioned?.length) parts.push('- Tools die ze gebruiken: ' + memory.tools_mentioned.join(', '));
+  if (memory.pain_points?.length) parts.push('- Pijnpunten: ' + memory.pain_points.join(', '));
+  if (memory.interests?.length) parts.push('- Interesses: ' + memory.interests.join(', '));
+  if (memory.language_preference) parts.push('- Taalvoorkeur: ' + memory.language_preference);
+  if (memory.custom_notes?.length) parts.push('- Notities: ' + memory.custom_notes.join('; '));
+  parts.push('Gebruik deze feiten waar relevant in je antwoord. Verwijs ernaar als het natuurlijk voelt.');
+  return parts.join('\n');
+}
+
 export async function generateResponse(
   config: AgentConfig,
   state: ConversationState,
   messages: Message[],
-  prospectInfo?: { name: string; headline: string; company: string }
+  prospectInfo?: { name: string; headline: string; company: string },
+  legendaryContext?: LegendaryContext
 ): Promise<ClaudeResponse> {
-  const systemPrompt = buildSystemPrompt(config, state);
+  let systemPrompt = buildSystemPrompt(config, state);
+
+  // === LEGENDARY FEATURES: Append to system prompt ===
+  if (legendaryContext) {
+    systemPrompt += '\n\n' + analyzeProspectStyle(messages);
+    systemPrompt += '\n\n' + buildWarmthCurveInstructions(legendaryContext.messageCount);
+    systemPrompt += '\n\n' + buildTimeOfDayTone(legendaryContext.currentHourCET);
+    systemPrompt += '\n\n' + buildMessageVarianceInstructions(legendaryContext.previousOpeners);
+    systemPrompt += '\n\n' + buildConversationMemoryContext(legendaryContext.conversationMemory);
+    if (legendaryContext.detectedPhase) {
+      systemPrompt += '\n\n## EERDER GEDETECTEERDE FASE: ' + legendaryContext.detectedPhase.toUpperCase();
+      systemPrompt += '\nHoud deze fase-inschatting in gedachten, maar corrigeer als de situatie veranderd is.';
+    }
+  }
+
+  // Add memory extraction instructions
+  systemPrompt += `
+
+## MEMORY EXTRACTION (extra veld in je JSON)
+Voeg een extra veld toe aan je JSON response:
+"extracted_facts": {
+  "team_size": "string of null",
+  "tools_mentioned": ["string array"],
+  "pain_points": ["string array"],
+  "interests": ["string array"],
+  "role": "string or null",
+  "company": "string or null",
+  "language_preference": "nl or en or null"
+}
+Vul alleen in wat je NIEUW leert uit het LAATSTE bericht van de prospect. Laat velden null als er niets nieuws is.`;
 
   const conversationHistory = messages.map((m) => ({
     role: m.role === 'prospect' ? 'user' as const : 'assistant' as const,
@@ -373,7 +528,7 @@ export async function generateResponse(
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-opus-4-20250514',
       max_tokens: 1024,
       system: systemPrompt,
       messages: conversationHistory,

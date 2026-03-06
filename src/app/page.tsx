@@ -18,6 +18,7 @@ interface DraftMessage {
   prospect_name: string;
   message: string;
   reasoning: string;
+  phase?: string;
   created_at: string;
   status: string;
   scheduled_send_at?: string;
@@ -32,10 +33,13 @@ export default function Dashboard() {
   const [drafts, setDrafts] = useState<DraftMessage[]>([]);
   const [draftCounts, setDraftCounts] = useState({ pending: 0, approved: 0, sent: 0, rejected: 0 });
   const [sentToday, setSentToday] = useState(0);
+  const [maxDaily, setMaxDaily] = useState(15);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState('');
   const [sendingBatch, setSendingBatch] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState('');
   const [selectedDrafts, setSelectedDrafts] = useState<Set<string>>(new Set());
   const router = useRouter();
 
@@ -56,12 +60,30 @@ export default function Dashboard() {
         setDrafts(q.drafts || []);
         setDraftCounts(q.counts || { pending: 0, approved: 0, sent: 0, rejected: 0 });
         setSentToday(q.sent_today || 0);
+        setMaxDaily(q.max_daily || 15);
       }
     } catch (err) { console.error('Dashboard load error:', err); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Auto-refresh drafts every 15 seconds when in copilot mode
+  useEffect(() => {
+    if (mode !== 'copilot') return;
+    const interval = setInterval(async () => {
+      try {
+        const queueRes = await fetch('/api/agent/queue');
+        if (queueRes.ok) {
+          const q = await queueRes.json();
+          setDrafts(q.drafts || []);
+          setDraftCounts(q.counts || { pending: 0, approved: 0, sent: 0, rejected: 0 });
+          setSentToday(q.sent_today || 0);
+        }
+      } catch {}
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [mode]);
 
   async function changeMode(newMode: AgentMode) {
     if (newMode === 'auto') {
@@ -70,10 +92,11 @@ export default function Dashboard() {
         'The agent will automatically respond to incoming messages.\n\n' +
         'Safety measures active:\n' +
         '• Quality gate checks every message\n' +
-        '• Random delays (3-60 min)\n' +
-        '• Max 15 messages/day\n' +
-        '• Working hours only (8:30-18:30)\n' +
-        '• Unsafe messages flagged for review\n\n' +
+        '• Phase-aware timing (5min - 12h delays)\n' +
+        '• Dynamic daily capacity\n' +
+        '• Working hours only (8:30-18:30 CET)\n' +
+        '• Unsafe messages flagged for review\n' +
+        '• Style mirroring & warmth curve active\n\n' +
         'Activate Auto Mode?'
       );
       if (!ok) return;
@@ -84,7 +107,12 @@ export default function Dashboard() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: newMode }),
       });
-      if (res.ok) { const d = await res.json(); setMode(d.mode); }
+      if (res.ok) {
+        const d = await res.json();
+        setMode(d.mode);
+        // Force sidebar to re-read mode
+        window.dispatchEvent(new CustomEvent('agent-mode-changed', { detail: d.mode }));
+      }
     } catch (err) { console.error('Mode change failed:', err); }
   }
 
@@ -104,6 +132,23 @@ export default function Dashboard() {
       }
     } catch (err) { setSyncResult(`✕ Error: ${err}`); }
     finally { setSyncing(false); setTimeout(() => setSyncResult(''), 5000); }
+  }
+
+  async function runCopilotScan() {
+    if (scanning) return;
+    setScanning(true); setScanResult('Scanning conversations...');
+    try {
+      const res = await fetch('/api/agent/copilot-scan', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setScanResult(`✓ Scanned ${data.scanned} chats, created ${data.drafts_created} drafts`);
+        loadAll(); // Refresh everything
+      } else {
+        const err = await res.json();
+        setScanResult(`✕ ${err.error}`);
+      }
+    } catch (err) { setScanResult(`✕ Error: ${err}`); }
+    finally { setScanning(false); setTimeout(() => setScanResult(''), 8000); }
   }
 
   async function handleDraftAction(draftId: string, action: 'approve' | 'reject') {
@@ -132,7 +177,7 @@ export default function Dashboard() {
       });
       if (res.ok) {
         const data = await res.json();
-        alert(`✓ ${data.scheduled_count} messages scheduled with human-like timing`);
+        alert(`✓ ${data.scheduled_count} messages scheduled with human-like timing\n\nEach will be sent at staggered intervals with phase-aware delays.`);
         loadAll();
       } else {
         const err = await res.json();
@@ -163,6 +208,10 @@ export default function Dashboard() {
   function getInitials(name: string): string {
     return name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
   }
+
+  const phaseEmoji: Record<string, string> = {
+    koud: '❄️', lauw: '🌤', warm: '🔥', proof: '📹', call: '📞', weerstand: '🛡️',
+  };
 
   if (loading) {
     return (
@@ -211,6 +260,16 @@ export default function Dashboard() {
         </div>
       )}
 
+      {scanResult && (
+        <div style={{
+          marginBottom: '16px', fontSize: '13px', padding: '10px 16px', borderRadius: '10px',
+          background: scanResult.startsWith('✓') ? 'rgba(16,185,129,0.1)' : scanResult.startsWith('Scan') ? 'rgba(59,130,246,0.1)' : 'rgba(239,68,68,0.1)',
+          color: scanResult.startsWith('✓') ? 'var(--success)' : scanResult.startsWith('Scan') ? 'var(--accent)' : 'var(--danger)',
+        }}>
+          {scanning && '⏳ '}{scanResult}
+        </div>
+      )}
+
       {/* Mode Selector */}
       <div className="glass-card" style={{ padding: '20px', marginBottom: '20px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
@@ -240,11 +299,21 @@ export default function Dashboard() {
               </button>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {mode === 'copilot' && (
+              <button
+                className="btn-primary"
+                onClick={runCopilotScan}
+                disabled={scanning || !linkedInStatus.connected}
+                style={{ fontSize: '13px', padding: '8px 16px', opacity: (scanning || !linkedInStatus.connected) ? 0.5 : 1 }}
+              >
+                {scanning ? '⏳ Scanning...' : '🔍 Scan All Chats'}
+              </button>
+            )}
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Sent today</div>
-              <div style={{ fontSize: '18px', fontWeight: 700, color: sentToday >= 15 ? 'var(--danger)' : 'var(--text-primary)' }}>
-                {sentToday}/15
+              <div style={{ fontSize: '18px', fontWeight: 700, color: sentToday >= maxDaily ? 'var(--danger)' : 'var(--text-primary)' }}>
+                {sentToday}/{maxDaily}
               </div>
             </div>
             <div style={{
@@ -253,6 +322,24 @@ export default function Dashboard() {
             }} className={linkedInStatus.connected ? 'pulse-live' : ''} title={linkedInStatus.connected ? 'LinkedIn Connected' : 'LinkedIn Disconnected'} />
           </div>
         </div>
+
+        {/* Legendary features indicator */}
+        {mode !== 'off' && (
+          <div style={{ marginTop: '12px', display: 'flex', gap: '6px', flexWrap: 'wrap', fontSize: '11px' }}>
+            {['Style Mirror', 'Warmth Curve', 'Phase-Aware Timing', 'Cross-Chat Stagger', 'Read Delay', 'Message Variance'].map(feat => (
+              <span key={feat} style={{
+                padding: '3px 8px', borderRadius: '6px',
+                background: 'rgba(16,185,129,0.1)', color: 'var(--success)',
+                border: '1px solid rgba(16,185,129,0.2)',
+              }}>✓ {feat}</span>
+            ))}
+            <span style={{
+              padding: '3px 8px', borderRadius: '6px',
+              background: 'rgba(59,130,246,0.1)', color: 'var(--accent)',
+              border: '1px solid rgba(59,130,246,0.2)',
+            }}>🧠 Claude Opus 4</span>
+          </div>
+        )}
       </div>
 
       {/* Metrics */}
@@ -271,7 +358,7 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Copilot Queue — only show when in copilot mode or there are pending drafts */}
+      {/* Copilot Queue */}
       {(mode === 'copilot' || pendingDrafts.length > 0 || approvedDrafts.length > 0) && (
         <div style={{ marginBottom: '24px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
@@ -298,9 +385,19 @@ export default function Dashboard() {
 
           {pendingDrafts.length === 0 && approvedDrafts.length === 0 ? (
             <div className="glass-card" style={{ padding: '32px', textAlign: 'center' }}>
-              <p style={{ color: 'var(--text-muted)', fontSize: '14px' }}>
-                {mode === 'copilot' ? 'No pending drafts. The AI will generate drafts when new messages arrive.' : 'Queue is empty.'}
+              <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginBottom: '12px' }}>
+                {mode === 'copilot' ? 'No pending drafts. Click "Scan All Chats" to generate drafts for conversations with unread messages.' : 'Queue is empty.'}
               </p>
+              {mode === 'copilot' && (
+                <button
+                  className="btn-primary"
+                  onClick={runCopilotScan}
+                  disabled={scanning || !linkedInStatus.connected}
+                  style={{ fontSize: '13px', padding: '10px 20px' }}
+                >
+                  {scanning ? '⏳ Scanning...' : '🔍 Scan All Chats for Drafts'}
+                </button>
+              )}
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -308,11 +405,19 @@ export default function Dashboard() {
                 <div key={draft.id} className={`draft-card ${draft.status}`}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
                         <span style={{ fontWeight: 600, fontSize: '14px' }}>{draft.prospect_name}</span>
                         <span className={`state-badge ${draft.status === 'approved' ? 'state-engaged' : 'state-objection'}`}>
                           {draft.status === 'approved' ? '✓ Approved' : '⏳ Pending'}
                         </span>
+                        {draft.phase && (
+                          <span style={{
+                            fontSize: '11px', padding: '2px 6px', borderRadius: '4px',
+                            background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)',
+                          }}>
+                            {phaseEmoji[draft.phase] || '📊'} {draft.phase}
+                          </span>
+                        )}
                       </div>
                       <div style={{
                         fontSize: '13px', color: 'var(--text-secondary)',

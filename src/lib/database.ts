@@ -1,4 +1,6 @@
 import {Conversation, Message, AgentConfig, ConversationState, DashboardMetrics, AgentMode, DraftMessage} from '@/types';
+import * as fsNode from 'fs';
+import * as pathNode from 'path';
 
 // ============================================
 // In-Memory Database (replace with Supabase later)
@@ -51,6 +53,30 @@ let agentConfig: AgentConfig = { ...defaultConfig };
 
 // GLOBAL AGENT TOGGLE — starts OFF for safety
 let globalAgentEnabled = false;
+
+// ============================================
+// File-based persistence (survives Vercel cold starts)
+// ============================================
+const PERSIST_DIR = '/tmp/appointment-setter-persist';
+
+function ensurePersistDir() {
+  try { fsNode.mkdirSync(PERSIST_DIR, { recursive: true }); } catch {}
+}
+
+function readPersisted<T>(key: string, fallback: T): T {
+  try {
+    ensurePersistDir();
+    const data = fsNode.readFileSync(pathNode.join(PERSIST_DIR, key + '.json'), 'utf8');
+    return JSON.parse(data);
+  } catch { return fallback; }
+}
+
+function writePersisted(key: string, value: any) {
+  try {
+    ensurePersistDir();
+    fsNode.writeFileSync(pathNode.join(PERSIST_DIR, key + '.json'), JSON.stringify(value));
+  } catch (e) { console.error('[Persist] Write error:', e); }
+}
 
 // ============================================
 // Global Agent Toggle
@@ -210,12 +236,16 @@ export function getMetrics(): DashboardMetrics {
 }
 
 // ============================================
-// Agent Mode (auto | copilot | off)
+// Agent Mode (auto | copilot | off) — FILE-PERSISTED
 // ============================================
-let agentMode: AgentMode = 'off';
+let agentMode: AgentMode = readPersisted<AgentMode>('agent_mode', 'off');
 
 export function getAgentMode(): AgentMode { return agentMode; }
-export function setAgentMode(mode: AgentMode) { agentMode = mode; }
+export function setAgentMode(mode: AgentMode) {
+  agentMode = mode;
+  writePersisted('agent_mode', mode);
+  console.log('[Agent] Mode set to:', mode);
+}
 
 // ============================================
 // Draft Queue (for Copilot mode)
@@ -260,4 +290,96 @@ export function removeDraft(id: string): boolean {
 export function getSentTodayCount(): number {
   const today = new Date().toISOString().split('T')[0];
   return draftQueue.filter(d => d.status === 'sent' && d.sent_at?.startsWith(today)).length;
+}
+
+// ============================================
+// CONVERSATION MEMORY — per-chat context storage
+// ============================================
+interface ConversationMemory {
+  chat_id: string;
+  facts: {
+    team_size?: string;
+    tools_mentioned?: string[];
+    pain_points?: string[];
+    interests?: string[];
+    role?: string;
+    company?: string;
+    language_preference?: string;
+    custom_notes?: string[];
+  };
+  previous_openers: string[];  // Track last 5 openers used (for variance)
+  updated_at: string;
+}
+
+const conversationMemories: Map<string, ConversationMemory> = new Map();
+
+export function getConversationMemory(chatId: string): ConversationMemory | undefined {
+  return conversationMemories.get(chatId);
+}
+
+export function updateConversationMemory(chatId: string, updates: Partial<ConversationMemory['facts']>) {
+  const existing = conversationMemories.get(chatId);
+  if (existing) {
+    existing.facts = { ...existing.facts, ...updates };
+    existing.updated_at = new Date().toISOString();
+  } else {
+    conversationMemories.set(chatId, {
+      chat_id: chatId,
+      facts: updates,
+      previous_openers: [],
+      updated_at: new Date().toISOString(),
+    });
+  }
+}
+
+export function addPreviousOpener(chatId: string, opener: string) {
+  const mem = conversationMemories.get(chatId);
+  if (mem) {
+    mem.previous_openers.push(opener);
+    if (mem.previous_openers.length > 5) mem.previous_openers.shift();
+  } else {
+    conversationMemories.set(chatId, {
+      chat_id: chatId,
+      facts: {},
+      previous_openers: [opener],
+      updated_at: new Date().toISOString(),
+    });
+  }
+}
+
+export function getPreviousOpeners(chatId: string): string[] {
+  return conversationMemories.get(chatId)?.previous_openers || [];
+}
+
+// ============================================
+// CONVERSATION PHASE — auto-detected, persisted
+// ============================================
+const conversationPhases: Map<string, string> = new Map();
+
+export function getConversationPhase(chatId: string): string | undefined {
+  return conversationPhases.get(chatId);
+}
+
+export function setConversationPhase(chatId: string, phase: string) {
+  conversationPhases.set(chatId, phase);
+}
+
+// ============================================
+// WARM-UP PERIOD — track account activation
+// ============================================
+let accountActivatedAt: string | null = readPersisted<string | null>('account_activated_at', null);
+
+export function getAccountActivatedAt(): string | null {
+  return accountActivatedAt;
+}
+
+export function setAccountActivatedAt(date?: string) {
+  accountActivatedAt = date || new Date().toISOString();
+  writePersisted('account_activated_at', accountActivatedAt);
+}
+
+export function getAccountAgeWeeks(): number {
+  if (!accountActivatedAt) return 99; // Assume mature if not tracked
+  const ageMs = Date.now() - new Date(accountActivatedAt).getTime();
+  return Math.floor(ageMs / (7 * 24 * 60 * 60 * 1000));
 }

@@ -2,7 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -10,16 +10,35 @@ export default function Sidebar() {
   const [agentMode, setAgentMode] = useState('off');
   const [queueCount, setQueueCount] = useState(0);
 
-  useEffect(() => {
+  const refreshStatus = useCallback(() => {
     fetch('/api/agent/mode')
       .then(r => r.json())
       .then(d => setAgentMode(d.mode || 'off'))
       .catch(() => {});
-    fetch('/api/agent/queue?status=pending')
+    fetch('/api/agent/queue')
       .then(r => r.json())
       .then(d => setQueueCount(d.counts?.pending || 0))
       .catch(() => {});
-  }, [pathname]);
+  }, []);
+
+  // Refresh on pathname change
+  useEffect(() => { refreshStatus(); }, [pathname, refreshStatus]);
+
+  // Listen for mode changes from dashboard
+  useEffect(() => {
+    const handler = (e: CustomEvent) => {
+      setAgentMode(e.detail);
+    };
+    window.addEventListener('agent-mode-changed', handler as EventListener);
+    return () => window.removeEventListener('agent-mode-changed', handler as EventListener);
+  }, []);
+
+  // Auto-poll every 10 seconds when in active mode
+  useEffect(() => {
+    if (agentMode === 'off') return;
+    const interval = setInterval(refreshStatus, 10000);
+    return () => clearInterval(interval);
+  }, [agentMode, refreshStatus]);
 
   useEffect(() => { setMobileOpen(false); }, [pathname]);
 
@@ -52,9 +71,15 @@ export default function Sidebar() {
   };
 
   const modeLabels: Record<string, string> = {
-    auto: 'Auto Mode',
-    copilot: 'Copilot Mode',
-    off: 'Agent Off',
+    auto: '🤖 Auto Mode',
+    copilot: '👤 Copilot Mode',
+    off: '⏸ Agent Off',
+  };
+
+  const modeDescriptions: Record<string, string> = {
+    auto: 'Responding automatically with human timing',
+    copilot: queueCount > 0 ? queueCount + ' drafts pending review' : 'Monitoring chats for new messages',
+    off: 'No automatic responses',
   };
 
   return (
@@ -109,7 +134,8 @@ export default function Sidebar() {
           padding: '14px 16px',
           background: 'var(--bg-card)',
           borderRadius: '12px',
-          border: '1px solid var(--border)',
+          border: `1px solid ${agentMode === 'auto' ? 'rgba(16,185,129,0.3)' : agentMode === 'copilot' ? 'rgba(59,130,246,0.3)' : 'var(--border)'}`,
+          transition: 'border-color 0.3s ease',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
             <div style={{
@@ -124,9 +150,7 @@ export default function Sidebar() {
             </span>
           </div>
           <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-            {agentMode === 'auto' && 'Responding automatically'}
-            {agentMode === 'copilot' && `${queueCount} drafts pending review`}
-            {agentMode === 'off' && 'No automatic responses'}
+            {modeDescriptions[agentMode] || 'No automatic responses'}
           </div>
         </div>
       </nav>
