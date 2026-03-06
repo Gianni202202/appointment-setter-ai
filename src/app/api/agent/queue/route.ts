@@ -3,6 +3,9 @@ import { getDrafts, getDraft, updateDraft, removeDraft, addDraft, getSentTodayCo
 import { sendMessage } from '@/lib/unipile';
 import { calculateReplyDelay, calculateTypingDelay, calculateCrossChatStagger, calculateReadDelay, isWithinWorkingHours, getNextWorkingWindow, getDailyCapacity } from '@/lib/human-timing';
 
+// Pro plan: allow up to 60s execution
+export const maxDuration = 60;
+
 // GET — list drafts (optional ?status=pending)
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);

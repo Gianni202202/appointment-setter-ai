@@ -3,6 +3,9 @@ import { getAgentMode, getDrafts, updateDraft } from '@/lib/database';
 import { processScheduledSends } from '@/lib/queue-processor';
 import { isWithinWorkingHours } from '@/lib/human-timing';
 
+// Pro plan: allow up to 60s execution
+export const maxDuration = 60;
+
 const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
 const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';

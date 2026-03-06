@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server';
 import { generateResponse, LegendaryContext } from '@/lib/claude';
 import { getConfig, addDraft, getDrafts, getConversationMemory, getPreviousOpeners, getConversationPhase, setConversationPhase, addPreviousOpener, updateConversationMemory } from '@/lib/database';
 
+// Pro plan: allow up to 60s execution
+export const maxDuration = 60;
+
 const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
 const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';

@@ -7,6 +7,9 @@ import {
 } from '@/lib/database';
 import { getDailyCapacity } from '@/lib/human-timing';
 
+// Pro plan: allow up to 60s execution
+export const maxDuration = 60;
+
 const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
 const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
