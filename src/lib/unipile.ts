@@ -156,7 +156,7 @@ export async function sendInvitation(providerId: string, message?: string): Prom
     provider_id: providerId,
     account_id: UNIPILE_ACCOUNT_ID,
   };
-  if (message) body.message = message.substring(0, 300); // LinkedIn max 300 chars
+  if (message) body.message = message.substring(0, 290); // LinkedIn safe limit (300 max, 290 for safety)
   
   const response = await fetch(url, {
     method: 'POST',
@@ -182,6 +182,71 @@ export async function sendInvitation(providerId: string, message?: string): Prom
 
 
 
+
+
+// ============================================
+// Get User Posts (for enrichment context)
+// ============================================
+export interface LinkedInPost {
+  id: string;
+  text: string;
+  created_at: string;
+  reactions_count?: number;
+  comments_count?: number;
+  shares_count?: number;
+}
+
+export async function getUserPosts(identifier: string, limit: number = 3): Promise<LinkedInPost[]> {
+  try {
+    const url = `${UNIPILE_DSN}/api/v1/posts/${encodeURIComponent(identifier)}?account_id=${UNIPILE_ACCOUNT_ID}&limit=${limit}&is_own=false`;
+    
+    console.log('[Unipile Posts] Fetching posts for:', identifier);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: headers(),
+    });
+    
+    if (!response.ok) {
+      const err = await response.text();
+      console.error('[Unipile Posts] Error:', response.status, err.substring(0, 100));
+      return []; // Non-critical — return empty
+    }
+    
+    const data = await response.json();
+    const items = data.items || data || [];
+    
+    // Filter to last 3 months only
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+    
+    const filtered = items
+      .filter((p: any) => {
+        // Exclude reposts/reshares — only original content
+        if (p.is_repost || p.type === "repost" || p.reshared_post || p.is_reshare) return false;
+        // Exclude if no meaningful text
+        if (!p.text && !p.body) return false;
+        // Filter to last 3 months only
+        if (!p.created_at) return true;
+        return new Date(p.created_at) >= threeMonthsAgo;
+      })
+      .slice(0, limit)
+      .map((p: any) => ({
+        id: p.id || p.social_id || '',
+        text: (p.text || p.body || '').substring(0, 500),
+        created_at: p.created_at || '',
+        reactions_count: p.reactions_count || p.likes_count || 0,
+        comments_count: p.comments_count || 0,
+        shares_count: p.shares_count || p.reposts_count || 0,
+      }));
+    
+    console.log('[Unipile Posts] Got', filtered.length, 'recent posts for', identifier);
+    return filtered;
+  } catch (error: any) {
+    console.error('[Unipile Posts] Failed:', error.message);
+    return []; // Non-critical
+  }
+}
 
 // ============================================
 // LEGACY: Chat/Message functions (used by webhooks + queue)

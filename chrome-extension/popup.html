@@ -2,229 +2,280 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Elvatix Importer</title>
+  <title>Elvatix Pipeline</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-    
     * { margin: 0; padding: 0; box-sizing: border-box; }
     
+    :root {
+      --bg: #0c0c18;
+      --bg-card: rgba(20, 20, 40, 0.9);
+      --border: rgba(99, 102, 241, 0.12);
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.25);
+      --text: #e2e8f0;
+      --text-dim: #64748b;
+      --text-bright: #f8fafc;
+      --green: #10b981;
+      --amber: #f59e0b;
+      --red: #ef4444;
+    }
+    
     body {
-      font-family: 'Inter', -apple-system, sans-serif;
-      width: 420px;
-      min-height: 520px;
-      background: linear-gradient(145deg, #0f0f1a 0%, #1a1a2e 50%, #16213e 100%);
-      color: #e2e8f0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      width: 520px;
+      min-height: 600px;
+      max-height: 700px;
+      background: var(--bg);
+      color: var(--text);
       overflow-y: auto;
     }
+    body::-webkit-scrollbar { width: 4px; }
+    body::-webkit-scrollbar-track { background: transparent; }
+    body::-webkit-scrollbar-thumb { background: rgba(99,102,241,0.2); border-radius: 4px; }
     
-    /* Header */
+    /* ── Header ── */
     .header {
-      background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.1));
-      border-bottom: 1px solid rgba(99,102,241,0.2);
-      padding: 16px 20px;
-      display: flex;
-      align-items: center;
-      gap: 12px;
+      background: linear-gradient(145deg, rgba(99,102,241,0.12) 0%, rgba(139,92,246,0.08) 50%, rgba(6,182,212,0.06) 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 24px;
+      display: flex; align-items: center; gap: 14px;
+      position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(20px);
     }
-    .header-icon {
-      width: 40px; height: 40px; border-radius: 12px;
-      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    .logo {
+      width: 48px; height: 48px; border-radius: 14px;
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #06b6d4 100%);
       display: flex; align-items: center; justify-content: center;
-      font-size: 20px; box-shadow: 0 4px 12px rgba(99,102,241,0.3);
+      font-size: 24px; box-shadow: 0 8px 24px var(--accent-glow);
+      animation: pulse 3s ease-in-out infinite;
     }
-    .header-text h1 { font-size: 16px; font-weight: 700; color: #fff; }
-    .header-text span { font-size: 11px; color: #818cf8; font-weight: 500; }
-    .header-badge {
-      margin-left: auto; padding: 3px 8px; border-radius: 20px;
-      background: rgba(99,102,241,0.15); color: #a5b4fc; font-size: 10px; font-weight: 600;
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 8px 24px var(--accent-glow); }
+      50% { box-shadow: 0 8px 32px rgba(99,102,241,0.35); }
+    }
+    .header-info h1 { font-size: 18px; font-weight: 800; color: var(--text-bright); letter-spacing: -0.3px; }
+    .header-info p { font-size: 12px; color: #818cf8; font-weight: 500; margin-top: 2px; }
+    .version {
+      margin-left: auto; padding: 4px 10px; border-radius: 20px;
+      background: rgba(99,102,241,0.1); color: #a5b4fc;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
     }
     
-    /* Content */
-    .content { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+    /* ── Content ── */
+    .content { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
     
-    /* Status Card */
-    .status-card {
-      background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.05));
-      border: 1px solid rgba(99,102,241,0.15);
-      border-radius: 14px;
-      padding: 14px 16px;
+    /* ── Card ── */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px 20px;
+      transition: all 0.2s;
     }
-    .status-card .label {
-      font-size: 10px; font-weight: 700; letter-spacing: 0.8px;
-      color: #818cf8; text-transform: uppercase; margin-bottom: 6px;
+    .card:hover { border-color: rgba(99,102,241,0.2); }
+    .card-label {
+      font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+      text-transform: uppercase; margin-bottom: 10px;
     }
-    .status-card .value {
-      font-size: 13px; font-weight: 500; color: #e2e8f0; line-height: 1.4;
+    .card-label.blue { color: #818cf8; }
+    .card-label.green { color: var(--green); }
+    .card-label.amber { color: var(--amber); }
+    
+    /* ── Status indicator ── */
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 10px; font-size: 12px; font-weight: 600;
     }
-    .status-card .url {
-      font-size: 11px; color: #64748b; margin-top: 4px;
+    .status-badge.ready { background: rgba(16,185,129,0.1); color: #6ee7b7; border: 1px solid rgba(16,185,129,0.2); }
+    .status-badge.waiting { background: rgba(245,158,11,0.1); color: #fcd34d; border: 1px solid rgba(245,158,11,0.2); }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; }
+    .status-dot.green { background: var(--green); box-shadow: 0 0 8px rgba(16,185,129,0.5); }
+    .status-dot.amber { background: var(--amber); box-shadow: 0 0 8px rgba(245,158,11,0.5); }
+    
+    /* ── URL display ── */
+    .url-display {
+      margin-top: 8px; padding: 8px 12px; border-radius: 8px;
+      background: rgba(0,0,0,0.3); font-size: 11px; color: var(--text-dim);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    .status-card.not-ready {
-      background: rgba(245,158,11,0.08);
-      border-color: rgba(245,158,11,0.2);
-    }
-    .status-card.not-ready .label { color: #f59e0b; }
-    
-    /* Section */
-    .section { display: flex; flex-direction: column; gap: 8px; }
-    .section-label {
-      font-size: 12px; font-weight: 600; color: #94a3b8;
+      font-family: 'SF Mono', 'Fira Code', monospace;
     }
     
-    /* Select */
+    /* ── Select ── */
+    .select-wrap { position: relative; }
     select {
-      width: 100%; padding: 10px 14px; border-radius: 10px;
-      background: rgba(30,30,50,0.8); border: 1px solid rgba(99,102,241,0.15);
-      color: #e2e8f0; font-size: 13px; font-family: inherit;
-      appearance: none; cursor: pointer;
+      width: 100%; padding: 12px 16px; border-radius: 12px;
+      background: rgba(15, 15, 30, 0.9); border: 1px solid var(--border);
+      color: var(--text); font-size: 13px; font-family: inherit; font-weight: 500;
+      appearance: none; cursor: pointer; transition: border-color 0.2s;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23818cf8' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
-      background-repeat: no-repeat;
-      background-position: right 12px center;
+      background-repeat: no-repeat; background-position: right 14px center;
     }
-    select:focus { outline: none; border-color: #6366f1; }
+    select:focus { outline: none; border-color: var(--accent); }
     
-    /* Textarea */
+    /* ── Textarea ── */
     textarea {
-      width: 100%; padding: 10px 14px; border-radius: 10px;
-      background: rgba(30,30,50,0.8); border: 1px solid rgba(99,102,241,0.15);
-      color: #e2e8f0; font-size: 12px; font-family: inherit;
-      resize: vertical; min-height: 60px; line-height: 1.5;
+      width: 100%; padding: 12px 14px; border-radius: 12px;
+      background: rgba(15, 15, 30, 0.9); border: 1px solid var(--border);
+      color: var(--text); font-size: 12px; font-family: inherit; line-height: 1.6;
+      resize: vertical; min-height: 70px; transition: border-color 0.2s;
     }
-    textarea:focus { outline: none; border-color: #6366f1; }
-    textarea::placeholder { color: #4b5563; }
-    
-    /* Buttons */
-    .btn-primary {
-      width: 100%; padding: 13px 20px; border: none; border-radius: 12px;
-      background: linear-gradient(135deg, #6366f1, #8b5cf6);
-      color: white; font-size: 14px; font-weight: 700; font-family: inherit;
-      cursor: pointer; transition: all 0.2s;
-      box-shadow: 0 4px 16px rgba(99,102,241,0.3);
+    textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+    textarea::placeholder { color: rgba(100, 116, 139, 0.6); }
+    .char-count { font-size: 10px; color: var(--text-dim); text-align: right; margin-top: 4px; }
+    .saved-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 10px; color: var(--green); margin-left: 8px;
+      opacity: 0; transition: opacity 0.3s;
     }
-    .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(99,102,241,0.4); }
-    .btn-primary:active { transform: translateY(0); }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .saved-badge.show { opacity: 1; }
     
-    .btn-secondary {
-      width: 100%; padding: 9px 14px; border-radius: 10px;
-      background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.2);
-      color: #a5b4fc; font-size: 12px; font-weight: 600; font-family: inherit;
-      cursor: pointer; transition: all 0.2s;
+    /* ── Buttons ── */
+    .btn {
+      width: 100%; padding: 14px 24px; border: none; border-radius: 14px;
+      font-size: 15px; font-weight: 700; font-family: inherit;
+      cursor: pointer; transition: all 0.25s; position: relative; overflow: hidden;
     }
-    .btn-secondary:hover { background: rgba(99,102,241,0.15); }
+    .btn-launch {
+      background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 40%, #06b6d4 100%);
+      color: white; box-shadow: 0 6px 24px var(--accent-glow);
+    }
+    .btn-launch:hover { transform: translateY(-2px); box-shadow: 0 10px 32px rgba(99,102,241,0.4); }
+    .btn-launch:active { transform: translateY(0); }
+    .btn-launch:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn-launch::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%);
+      transform: translateX(-100%); transition: transform 0.6s;
+    }
+    .btn-launch:hover::after { transform: translateX(100%); }
     
-    /* Progress */
-    .progress { display: none; margin-top: 4px; }
+    .btn-ghost {
+      width: auto; padding: 8px 14px; border-radius: 10px;
+      background: rgba(99,102,241,0.08); border: 1px solid var(--border);
+      color: #a5b4fc; font-size: 11px; font-weight: 600;
+    }
+    .btn-ghost:hover { background: rgba(99,102,241,0.12); border-color: rgba(99,102,241,0.25); }
+    
+    /* ── Progress ── */
+    .progress { display: none; }
     .progress.active { display: block; }
-    .progress-bar {
-      height: 4px; background: rgba(99,102,241,0.15); border-radius: 4px; overflow: hidden;
-    }
+    .progress-track { height: 6px; background: rgba(99,102,241,0.1); border-radius: 6px; overflow: hidden; }
     .progress-fill {
-      height: 100%; width: 0%; border-radius: 4px; transition: width 0.5s ease;
-      background: linear-gradient(90deg, #6366f1, #8b5cf6, #a78bfa);
+      height: 100%; width: 0%; border-radius: 6px; transition: width 0.6s ease;
+      background: linear-gradient(90deg, #6366f1, #8b5cf6, #06b6d4);
+      background-size: 200% 100%; animation: shimmer 2s linear infinite;
     }
-    .progress-text {
-      font-size: 11px; color: #818cf8; margin-top: 6px; text-align: center;
-    }
+    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+    .progress-label { font-size: 12px; color: #a5b4fc; margin-top: 8px; text-align: center; font-weight: 500; }
     
-    /* Result */
-    .result {
-      display: none; padding: 10px 14px; border-radius: 10px;
-      font-size: 12px; line-height: 1.5;
-    }
-    .result.success {
-      background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.2);
-      color: #86efac;
-    }
-    .result.error {
-      background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2);
-      color: #fca5a5;
-    }
+    /* ── Result ── */
+    .result { display: none; padding: 12px 16px; border-radius: 12px; font-size: 12px; line-height: 1.6; }
+    .result.active { display: block; }
+    .result.success { background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.15); color: #86efac; }
+    .result.error { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.15); color: #fca5a5; }
     
-    /* Log */
-    .log-section { border-top: 1px solid rgba(99,102,241,0.1); padding-top: 10px; }
-    .log-toggle {
-      font-size: 11px; color: #4b5563; cursor: pointer; text-align: center;
+    /* ── Debug ── */
+    .debug { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; }
+    .debug-toggle {
+      font-size: 10px; color: rgba(100,116,139,0.5); cursor: pointer; text-align: center;
       padding: 4px; border: none; background: none; font-family: inherit; width: 100%;
     }
-    .log-toggle:hover { color: #64748b; }
+    .debug-toggle:hover { color: var(--text-dim); }
     pre#log {
-      font-size: 10px; color: #4b5563; background: rgba(0,0,0,0.3);
-      border-radius: 8px; padding: 8px; max-height: 100px;
+      font-size: 10px; color: var(--text-dim); background: rgba(0,0,0,0.4);
+      border-radius: 10px; padding: 10px; max-height: 120px;
       overflow-y: auto; white-space: pre-wrap; word-break: break-all;
       margin-top: 6px; display: none; font-family: 'SF Mono', 'Fira Code', monospace;
+      border: 1px solid rgba(99,102,241,0.08);
     }
+    
+    /* ── Empty state ── */
+    .empty-state { text-align: center; padding: 30px 20px; }
+    .empty-icon { font-size: 54px; margin-bottom: 14px; filter: drop-shadow(0 8px 16px rgba(99,102,241,0.2)); }
+    .empty-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+    .empty-desc { font-size: 12px; color: var(--text-dim); line-height: 1.6; }
+    .empty-desc strong { color: #818cf8; }
   </style>
 </head>
 <body>
   <div class="header">
-    <div class="header-icon">⚡</div>
-    <div class="header-text">
-      <h1>Elvatix Importer</h1>
-      <span>Sales Navigator → Pipeline</span>
+    <div class="logo">⚡</div>
+    <div class="header-info">
+      <h1>Elvatix Pipeline</h1>
+      <p>Sales Navigator → Outreach</p>
     </div>
-    <span class="header-badge">v2.0</span>
+    <span class="version">v2.1</span>
   </div>
   
   <div class="content">
-    <!-- Sales Nav Detection -->
+    <!-- ✅ Sales Nav Detected -->
     <div id="on-sales-nav" style="display:none;">
-      <div class="status-card">
-        <div class="label">✅ Sales Navigator Detected</div>
-        <div class="value" id="search-info">Ready to import</div>
-        <div class="url" id="search-url"></div>
+      <div class="card">
+        <div class="card-label green">
+          <span class="status-badge ready"><span class="status-dot green"></span> Sales Navigator Detected</span>
+        </div>
+        <div class="url-display" id="search-url"></div>
       </div>
       
-      <div class="section" style="margin-top: 14px;">
-        <div class="section-label">📊 Max Results</div>
-        <select id="max-results">
-          <option value="10">10 prospects</option>
-          <option value="25" selected>25 prospects</option>
-          <option value="50">50 prospects</option>
-          <option value="100">100 prospects</option>
-        </select>
+      <div class="card" style="margin-top:12px">
+        <div class="card-label blue">⚙️ Import Settings</div>
+        <div class="select-wrap">
+          <select id="max-results">
+            <option value="10">10 prospects</option>
+            <option value="25" selected>25 prospects (recommended)</option>
+            <option value="50">50 prospects</option>
+          </select>
+        </div>
       </div>
       
-      <div class="section" style="margin-top: 14px;">
-        <div class="section-label">✍️ Message Instruction <span style="color:#4b5563;font-weight:400">(optional)</span></div>
-        <textarea id="instruction" rows="3"
-          placeholder="Bijv: 'Ik zoek partnerships in de tech sector. Refereer aan hun rol en bedrijf.' — Laat leeg voor standaard berichten."></textarea>
+      <div class="card" style="margin-top:12px">
+        <div class="card-label blue" style="display:flex;align-items:center;">
+          ✍️ Message Instruction
+          <span style="font-weight:400;color:var(--text-dim);font-size:10px;text-transform:none;letter-spacing:0;margin-left:6px">(optional — auto-saved)</span>
+          <span id="saved-badge" class="saved-badge">✅ Saved</span>
+        </div>
+        <textarea id="instruction" rows="3" placeholder="Bijv: 'Ik zoek partnerships in de tech sector. Refereer aan hun huidige rol en bedrijf.'&#10;&#10;Laat leeg voor standaard connectieverzoeken."></textarea>
+        <div class="char-count" id="instruction-count"></div>
       </div>
       
-      <button id="btn-import" class="btn-primary" style="margin-top: 14px;">
+      <button id="btn-import" class="btn btn-launch" style="margin-top:16px">
         🚀 Import & Generate Messages
       </button>
       
-      <div id="progress" class="progress" style="margin-top: 10px;">
-        <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
-        <div id="progress-text" class="progress-text">Starting...</div>
+      <div id="progress" class="progress" style="margin-top:12px">
+        <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+        <div id="progress-text" class="progress-label">Initializing...</div>
       </div>
       
-      <div id="result" class="result"></div>
+      <div id="result" class="result" style="margin-top:12px"></div>
     </div>
     
-    <!-- Not on Sales Nav -->
+    <!-- ⚠️ Not on Sales Nav -->
     <div id="not-on-sales-nav" style="display:none;">
-      <div class="status-card not-ready">
-        <div class="label">⚠️ Not on Sales Navigator</div>
-        <div class="value">Open a Sales Navigator search or lead list to start importing.</div>
+      <div class="card">
+        <div class="card-label amber">
+          <span class="status-badge waiting"><span class="status-dot amber"></span> Not on Sales Navigator</span>
+        </div>
       </div>
-      <div style="text-align:center; margin-top: 16px;">
-        <div style="font-size: 48px; margin-bottom: 12px;">🔍</div>
-        <p style="font-size: 13px; color: #64748b; line-height: 1.6;">
-          Go to <strong style="color:#818cf8">LinkedIn Sales Navigator</strong><br>
-          and search for your target audience
-        </p>
+      <div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <div class="empty-title">Navigate to Sales Navigator</div>
+        <div class="empty-desc">
+          Open a <strong>search</strong> or <strong>lead list</strong> in<br>
+          LinkedIn Sales Navigator to start importing
+        </div>
       </div>
     </div>
     
-    <!-- Debug Section -->
-    <div class="log-section">
-      <button id="btn-test" class="btn-secondary">🔌 Test API Connection</button>
-      <button class="log-toggle" onclick="document.getElementById('log').style.display = document.getElementById('log').style.display === 'none' ? 'block' : 'none'">
-        Show/Hide Debug Log
+    <!-- Debug -->
+    <div class="debug">
+      <div style="display:flex;gap:8px;justify-content:center">
+        <button id="btn-test" class="btn-ghost">🔌 Test API</button>
+        <button id="btn-open-dashboard" class="btn-ghost">📊 Open Dashboard</button>
+      </div>
+      <button class="debug-toggle" onclick="document.getElementById('log').style.display = document.getElementById('log').style.display === 'none' ? 'block' : 'none'">
+        Debug Console ▾
       </button>
       <pre id="log"></pre>
     </div>
