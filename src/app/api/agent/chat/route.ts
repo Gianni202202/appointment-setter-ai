@@ -174,13 +174,13 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
       parts: [{ text: m.content }],
     }));
 
-    const apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_KEY}`, {
+    const apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: COMMAND_SYSTEM_PROMPT }] },
         contents: geminiMessages,
-        generationConfig: { maxOutputTokens: 3000, temperature: 0.7 },
+        generationConfig: { maxOutputTokens: 8000, temperature: 0.7 },
       }),
     });
 

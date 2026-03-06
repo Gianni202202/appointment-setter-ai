@@ -3,8 +3,8 @@ import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 
 export const metadata: Metadata = {
-  title: "AI Appointment Setter — LinkedIn DM Agent",
-  description: "AI-powered LinkedIn DM management and appointment setting dashboard",
+  title: "GhostDM — Jouw LinkedIn Appointment Setter",
+  description: "AI-powered LinkedIn DM agent — onzichtbare outreach met menselijke timing",
 };
 
 export default function RootLayout({

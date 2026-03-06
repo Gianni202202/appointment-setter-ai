@@ -47,7 +47,7 @@ export default function Dashboard() {
   const [sendingBatch, setSendingBatch] = useState(false);
 
   // Smart Copilot
-  const [copilotMode, setCopilotMode] = useState<'manual' | 'autoscan'>('manual');
+  const [copilotMode, setCopilotMode] = useState<'manual' | 'autoscan'>('autoscan');
   const [autoScanning, setAutoScanning] = useState(false);
   const [scanResults, setScanResults] = useState<any[]>([]);
   const [scanLimit, setScanLimit] = useState(50);
@@ -722,13 +722,13 @@ export default function Dashboard() {
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
-          <h1 style={{ fontSize: '24px', fontWeight: 700 }}>Dashboard</h1>
+          <h1 style={{ fontSize: '24px', fontWeight: 700 }}>GhostDM</h1>
           <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            AI Appointment Setter — Powered by Gemini Flash
+            Jouw onzichtbare LinkedIn closer — Powered by Jarvis
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <button className="btn-secondary" onClick={async () => { setLoading(true); await loadAll(); showToast('Dashboard vernieuwd', 'info'); }} style={{ fontSize: '13px', padding: '8px 14px' }}>
+          <button className="btn-secondary" onClick={async () => { await loadAll(); showToast('Dashboard vernieuwd', 'info'); }} style={{ fontSize: '13px', padding: '8px 14px' }}>
             {loading ? '⏳ Laden...' : '🔄 Refresh'}
           </button>
           <button

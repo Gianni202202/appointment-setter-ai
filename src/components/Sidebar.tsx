@@ -111,18 +111,18 @@ export default function Sidebar() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '0 16px' }}>
             <div style={{
               width: '36px', height: '36px', borderRadius: '10px',
-              background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
+              background: 'linear-gradient(135deg, #0ea5e9, #06b6d4)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontWeight: 800, fontSize: '16px'
             }}>
-              AI
+              👻
             </div>
             <div>
               <div style={{ fontWeight: 700, fontSize: '16px', color: 'var(--text-primary)' }}>
-                AppointmentAI
+                GhostDM
               </div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                LinkedIn DM Agent
+                by Jarvis
               </div>
             </div>
           </div>
