@@ -62,6 +62,13 @@ export default function Sidebar() {
         <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
       </svg>
     )},
+    { href: '/learning', label: 'Learning', icon: (
+      <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+        <path d="M12 2L2 7l10 5 10-5-10-5z" />
+        <path d="M2 17l10 5 10-5" />
+        <path d="M2 12l10 5 10-5" />
+      </svg>
+    )},
     { href: '/settings', label: 'Settings', icon: (
       <svg width="20" height="20" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="3" />

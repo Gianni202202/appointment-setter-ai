@@ -30,6 +30,7 @@ interface AgentConfig {
     offer_description: string;
   };
   blacklist: string[];
+  best_practices: string;
 }
 
 interface SettingsFormProps {
@@ -260,6 +261,24 @@ export default function SettingsForm({ initialConfig }: SettingsFormProps) {
               </label>
             </div>
           </div>
+        </div>
+
+        {/* Best Practices */}
+        <div className="glass-card" style={{ padding: '24px' }}>
+          <h2 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '8px' }}>
+            🧠 Best Practices
+          </h2>
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+            Custom rules that are always included in the AI prompt. Use insights from the Learning page to add patterns that work. These rules have priority over default behavior.
+          </p>
+          <textarea
+            className="input-field"
+            rows={6}
+            placeholder={"Voorbeeld:\n- Houd berichten onder de 200 tekens\n- Begin altijd met een procesvraag\n- Gebruik nooit 'Ben benieuwd'\n- Bij 'warm' fase, bied direct Loom aan"}
+            value={config.best_practices || ''}
+            onChange={e => setConfig(prev => ({ ...prev, best_practices: e.target.value }))}
+            style={{ resize: 'vertical' }}
+          />
         </div>
 
         {/* Blacklist */}

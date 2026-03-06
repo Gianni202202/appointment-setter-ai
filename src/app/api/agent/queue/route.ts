@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getDrafts, getDraft, updateDraft, removeDraft, addDraft, getSentTodayCount, logActivity } from '@/lib/database';
+import { recordDraftOutcome } from '@/lib/self-learning';
 import { sendMessage } from '@/lib/unipile';
 import { calculateReplyDelay, calculateTypingDelay, calculateCrossChatStagger, calculateReadDelay, isWithinWorkingHours, getNextWorkingWindow, getDailyCapacity } from '@/lib/human-timing';
 
@@ -30,7 +31,7 @@ export async function GET(request: Request) {
 // POST — approve, reject, or edit individual drafts
 export async function POST(request: Request) {
   try {
-    const { action, draft_id, message } = await request.json();
+    const { action, draft_id, message, rejection_reason } = await request.json();
 
     if (!draft_id) {
       return NextResponse.json({ error: 'draft_id is required' }, { status: 400 });
@@ -48,12 +49,27 @@ export async function POST(request: Request) {
         message: message || draft.message,
       });
       await logActivity('draft_approved', draft.prospect_name || 'Unknown', { draft_id, chat_id: draft.chat_id });
+      // Self-learning: record this approval
+      await recordDraftOutcome({
+        chat_id: draft.chat_id,
+        phase: (draft as any).phase || 'unknown',
+        original_message: draft.message,
+        outcome: 'approved',
+      });
       return NextResponse.json({ success: true, draft: await getDraft(draft_id) });
     }
 
     if (action === 'reject') {
       await updateDraft(draft_id, { status: 'rejected' });
       await logActivity('draft_rejected', draft.prospect_name || 'Unknown', { draft_id, chat_id: draft.chat_id });
+      // Self-learning: record rejection with optional feedback
+      await recordDraftOutcome({
+        chat_id: draft.chat_id,
+        phase: (draft as any).phase || 'unknown',
+        original_message: draft.message,
+        outcome: 'rejected',
+        rejection_reason: rejection_reason || undefined,
+      });
       return NextResponse.json({ success: true });
     }
 
@@ -61,6 +77,14 @@ export async function POST(request: Request) {
       if (!message) {
         return NextResponse.json({ error: 'message is required for edit action' }, { status: 400 });
       }
+      // Self-learning: record edit (original → edited)
+      await recordDraftOutcome({
+        chat_id: draft.chat_id,
+        phase: (draft as any).phase || 'unknown',
+        original_message: draft.message,
+        edited_message: message,
+        outcome: 'edited',
+      });
       await updateDraft(draft_id, { message });
       return NextResponse.json({ success: true, draft: await getDraft(draft_id) });
     }

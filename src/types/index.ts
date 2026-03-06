@@ -46,6 +46,7 @@ export interface AgentConfig {
   tone: ToneConfig;
   rules: RulesConfig;
   blacklist: string[];
+  best_practices: string;
 }
 
 export interface ICPConfig {

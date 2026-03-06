@@ -459,13 +459,13 @@ export default function Dashboard() {
   // Guard to prevent double-click / double-fire on draft actions
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
   const [regeneratingDraftId, setRegeneratingDraftId] = useState<string | null>(null);
+  const [rejectingDraftId, setRejectingDraftId] = useState<string | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('');
 
-  async function handleDraftAction(draftId: string, action: 'approve' | 'reject') {
+  async function handleDraftAction(draftId: string, action: 'approve' | 'reject', reason?: string) {
     if (actionInProgress) return; // Prevent double-fire
     setActionInProgress(draftId);
     try {
-      const draft = drafts.find(d => d.id === draftId);
-
       // Update UI immediately (optimistic update)
       if (action === 'approve') {
         setDrafts(prev => {
@@ -481,36 +481,40 @@ export default function Dashboard() {
         });
       }
 
-      // Then sync to server
+      // Send to server — now includes rejection_reason
       const res = await fetch('/api/agent/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ draft_id: draftId, action }),
+        body: JSON.stringify({ draft_id: draftId, action, rejection_reason: reason || undefined }),
       });
 
       if (!res.ok) {
         showToast('Server sync failed — but local update applied', 'error');
       }
 
-      // Record outcome for self-learning (fire and forget)
-      if (draft) {
-        fetch('/api/agent/learn', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: 'record_outcome',
-            chat_id: draft.chat_id,
-            phase: (draft as any).phase || 'unknown',
-            original_message: draft.message,
-            outcome: action === 'approve' ? 'approved' : 'rejected',
-            sentiment: (draft as any).sentiment || 'neutral',
-          }),
-        }).catch(() => {});
-      }
+      // Close rejection modal
+      setRejectingDraftId(null);
+      setRejectionReason('');
 
-      showToast(action === 'approve' ? '✓ Draft approved — go to Step 3 to send' : '✗ Draft removed', action === 'approve' ? 'success' : 'info');
+      showToast(action === 'approve' ? '✓ Draft approved — go to Step 3 to send' : '✗ Draft removed' + (reason ? ' — feedback opgeslagen' : ''), action === 'approve' ? 'success' : 'info');
     } catch (err) { showToast('Action failed: ' + err, 'error'); }
     finally { setActionInProgress(null); }
+  }
+
+  function startReject(draftId: string) {
+    setRejectingDraftId(draftId);
+    setRejectionReason('');
+  }
+
+  function confirmReject() {
+    if (rejectingDraftId) {
+      handleDraftAction(rejectingDraftId, 'reject', rejectionReason || undefined);
+    }
+  }
+
+  function cancelReject() {
+    setRejectingDraftId(null);
+    setRejectionReason('');
   }
 
   async function sendApproved() {
@@ -1082,9 +1086,9 @@ export default function Dashboard() {
                           </button>
                           <button
                             className="btn-secondary"
-                            onClick={() => handleDraftAction(draft.id, 'reject')}
+                            onClick={() => startReject(draft.id)}
                             style={{ padding: '8px 16px', fontSize: '12px', color: 'var(--danger)' }}
-                            title="Remove this draft"
+                            title="Remove this draft with optional feedback"
                           >
                             ✕ Remove
                           </button>

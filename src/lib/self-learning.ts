@@ -39,6 +39,7 @@ interface LearningEntry {
   outcome: DraftOutcome;
   original_message: string;
   edited_message?: string; // If user edited, store the corrected version
+  rejection_reason?: string; // Why the user rejected this draft
   prospect_replied?: boolean; // Did the prospect respond after this message?
   reply_was_positive?: boolean;
   mini_ja_achieved?: boolean;
@@ -54,6 +55,9 @@ interface LearningInsights {
   optimal_length_range: { min: number; max: number };
   common_edits: string[]; // Summary of common human corrections
   human_preferred_patterns: string[]; // Derived from edits
+  reply_rate: number; // % of sent messages that got a reply
+  top_rejection_reasons: { reason: string; count: number }[];
+  top_messages: { message: string; phase: string; got_reply: boolean }[];
   last_updated: string;
 }
 
@@ -117,6 +121,7 @@ export async function recordDraftOutcome(entry: {
   edited_message?: string;
   outcome: DraftOutcome;
   sentiment?: string;
+  rejection_reason?: string;
 }) {
   const data = await readLearningData();
   
@@ -146,6 +151,7 @@ export async function recordDraftOutcome(entry: {
     outcome: entry.outcome,
     original_message: entry.original_message,
     edited_message: entry.edited_message,
+    rejection_reason: entry.rejection_reason,
   };
 
   data.push(newEntry);
@@ -192,6 +198,9 @@ export async function generateInsights(): Promise<LearningInsights> {
       optimal_length_range: { min: 80, max: 300 },
       common_edits: [],
       human_preferred_patterns: [],
+      reply_rate: 0,
+      top_rejection_reasons: [],
+      top_messages: [],
       last_updated: new Date().toISOString(),
     };
   }
@@ -264,6 +273,28 @@ export async function generateInsights(): Promise<LearningInsights> {
     }
   }
 
+  // Reply rate analysis
+  const sentEntries = data.filter(d => d.outcome === 'sent' || d.outcome === 'approved');
+  const repliedEntries = sentEntries.filter(d => d.prospect_replied === true);
+  const replyRate = sentEntries.length > 0 ? Math.round((repliedEntries.length / sentEntries.length) * 100) : 0;
+
+  // Rejection reason analysis
+  const reasonMap = new Map<string, number>();
+  for (const entry of rejected) {
+    const reason = entry.rejection_reason || 'Geen reden opgegeven';
+    reasonMap.set(reason, (reasonMap.get(reason) || 0) + 1);
+  }
+  const topRejectionReasons = Array.from(reasonMap.entries())
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+
+  // Top performing messages (approved + got reply)
+  const topMessages = data
+    .filter(d => (d.outcome === 'approved' || d.outcome === 'sent') && d.prospect_replied)
+    .slice(-10)
+    .map(d => ({ message: d.original_message.substring(0, 200), phase: d.phase, got_reply: d.reply_was_positive !== false }));
+
   return {
     total_drafts: data.length,
     approval_rate: Math.round((approved.length / data.length) * 100),
@@ -274,6 +305,9 @@ export async function generateInsights(): Promise<LearningInsights> {
     optimal_length_range: { min: p25, max: p75 },
     common_edits: [...new Set(commonEdits)].slice(0, 5),
     human_preferred_patterns: [...new Set(humanPreferred)].slice(0, 10),
+    reply_rate: replyRate,
+    top_rejection_reasons: topRejectionReasons,
+    top_messages: topMessages,
     last_updated: new Date().toISOString(),
   };
 }
@@ -323,6 +357,17 @@ export async function buildLearningPromptBlock(): Promise<string> {
     for (const p of insights.human_preferred_patterns.slice(0, 5)) {
       block += `- ${p}\n`;
     }
+  }
+
+  if (insights.top_rejection_reasons.length > 0) {
+    block += `\nMost common REJECTION reasons from operator (AVOID these patterns):\n`;
+    for (const r of insights.top_rejection_reasons.slice(0, 5)) {
+      block += `- "${r.reason}" (${r.count}x rejected)\n`;
+    }
+  }
+
+  if (insights.reply_rate > 0) {
+    block += `\nProspect reply rate: ${insights.reply_rate}% of sent messages got a reply.\n`;
   }
 
   block += `--- END LEARNING DATA ---\n`;

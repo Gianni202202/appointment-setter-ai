@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getAgentModeAsync, getDrafts, updateDraft } from '@/lib/database';
 import { processScheduledSends } from '@/lib/queue-processor';
+import { recordProspectReply } from '@/lib/self-learning';
 import { isWithinWorkingHours } from '@/lib/human-timing';
 
 // Pro plan: allow up to 60s execution
@@ -30,7 +31,44 @@ export async function GET(request: Request) {
   const sendResults = await processScheduledSends();
   results.sends = sendResults;
 
-  // 2. RETRY FAILED DRAFTS (max 3 per cron run)
+  // 2. TRACK PROSPECT REPLIES (auto-learning)
+  try {
+    const sentDrafts = (await getDrafts('sent')).filter(d => d.sent_at);
+    let repliesTracked = 0;
+    // Check last 10 sent messages for replies (to stay within API limits)
+    const recentSent = sentDrafts.slice(-10);
+    for (const draft of recentSent) {
+      if (!draft.chat_id || !DSN || !API_KEY) continue;
+      try {
+        const msgsRes = await fetch(`https://${DSN}/api/v1/chats/${draft.chat_id}/messages?limit=3`, {
+          headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
+          cache: 'no-store',
+        });
+        if (msgsRes.ok) {
+          const msgsData = await msgsRes.json();
+          const msgs = msgsData.items || msgsData || [];
+          // If the most recent message is from the prospect (not us)
+          const lastMsg = msgs[0];
+          if (lastMsg && !lastMsg.is_sender && lastMsg.text) {
+            const sentTime = new Date(draft.sent_at!).getTime();
+            const replyTime = new Date(lastMsg.timestamp || lastMsg.date).getTime();
+            // Only count if reply came AFTER our sent message
+            if (replyTime > sentTime) {
+              const text = lastMsg.text.toLowerCase();
+              const isPositive = !text.match(/niet|nee|no |stop|unsubscribe|geen interesse/i);
+              await recordProspectReply(draft.chat_id, isPositive);
+              repliesTracked++;
+            }
+          }
+        }
+      } catch {}
+    }
+    results.reply_tracking = { checked: recentSent.length, replies_found: repliesTracked };
+  } catch (err) {
+    results.reply_tracking = { error: String(err) };
+  }
+
+  // 3. RETRY FAILED DRAFTS (max 3 per cron run)
   try {
     const failedDrafts = (await getDrafts('failed')).slice(0, 3);
     let retried = 0;

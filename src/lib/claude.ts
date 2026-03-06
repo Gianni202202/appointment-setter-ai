@@ -552,6 +552,13 @@ Vul alleen in wat je NIEUW leert uit het LAATSTE bericht van de prospect. Laat v
     systemPrompt += learningBlock;
   }
 
+  // === BEST PRACTICES from settings ===
+  if (config.best_practices && config.best_practices.trim()) {
+    systemPrompt += `\n\n## BEST PRACTICES (door jou gedefinieerd — ALTIJD volgen)
+${config.best_practices}
+`;
+  }
+
   // === CUSTOM INSTRUCTION from operator (via agent chat) ===
   if (customInstruction) {
     systemPrompt += `\n\n## OPERATOR INSTRUCTIE (PRIORITEIT)

@@ -85,6 +85,7 @@ const defaultConfig: AgentConfig = {
     offer_description: 'Elvatix zet outreach berichten op schaal klaar op basis van je eigen template en tone of voice. Jij checkt, tweakt en verstuurt — bulk zonder copy paste, maar wel persoonlijk.',
   },
   blacklist: [],
+  best_practices: '',
 };
 
 let agentConfig: AgentConfig = { ...defaultConfig };
