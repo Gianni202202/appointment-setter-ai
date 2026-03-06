@@ -59,7 +59,7 @@ interface LearningInsights {
 }
 
 // Persistence
-const PERSIST_DIR = '/tmp/appointmentai';
+const PERSIST_DIR = '/tmp/appointment-setter-persist';
 
 function ensurePersistDir() {
   try { fs.mkdirSync(PERSIST_DIR, { recursive: true }); } catch {}

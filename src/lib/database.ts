@@ -51,8 +51,7 @@ const defaultConfig: AgentConfig = {
 
 let agentConfig: AgentConfig = { ...defaultConfig };
 
-// GLOBAL AGENT TOGGLE — starts OFF for safety
-let globalAgentEnabled = false;
+// GLOBAL AGENT TOGGLE — removed, use agentMode instead
 
 // ============================================
 // File-based persistence (survives Vercel cold starts)
@@ -78,18 +77,7 @@ function writePersisted(key: string, value: any) {
   } catch (e) { console.error('[Persist] Write error:', e); }
 }
 
-// ============================================
-// Global Agent Toggle
-// ============================================
-
-export function isAgentEnabled(): boolean {
-  return globalAgentEnabled;
-}
-
-export function setAgentEnabled(enabled: boolean): void {
-  globalAgentEnabled = enabled;
-  console.log(`[Agent] Global agent ${enabled ? 'ENABLED' : 'DISABLED'}`);
-}
+// Global Agent Toggle — REMOVED (use agentMode 'off'/'copilot'/'auto' instead)
 
 // ============================================
 // LinkedIn Account
@@ -248,48 +236,64 @@ export function setAgentMode(mode: AgentMode) {
 }
 
 // ============================================
-// Draft Queue (for Copilot mode)
+// Draft Queue (for Copilot mode) — FILE-PERSISTED
 // ============================================
-const draftQueue: DraftMessage[] = [];
-let draftCounter = 0;
+let draftCounter = readPersisted<number>('draft_counter', 0);
+
+function readDraftQueue(): DraftMessage[] {
+  return readPersisted<DraftMessage[]>('draft_queue', []);
+}
+
+function writeDraftQueue(queue: DraftMessage[]) {
+  writePersisted('draft_queue', queue);
+}
 
 export function addDraft(draft: Omit<DraftMessage, 'id' | 'status' | 'created_at'>): DraftMessage {
+  const queue = readDraftQueue();
+  draftCounter++;
+  writePersisted('draft_counter', draftCounter);
   const newDraft: DraftMessage = {
     ...draft,
-    id: 'draft_' + (++draftCounter) + '_' + Date.now(),
+    id: 'draft_' + draftCounter + '_' + Date.now(),
     status: 'pending',
     created_at: new Date().toISOString(),
   };
-  draftQueue.push(newDraft);
+  queue.push(newDraft);
+  writeDraftQueue(queue);
   return newDraft;
 }
 
 export function getDrafts(status?: string): DraftMessage[] {
-  if (status) return draftQueue.filter(d => d.status === status);
-  return [...draftQueue];
+  const queue = readDraftQueue();
+  if (status) return queue.filter(d => d.status === status);
+  return [...queue];
 }
 
 export function getDraft(id: string): DraftMessage | undefined {
-  return draftQueue.find(d => d.id === id);
+  return readDraftQueue().find(d => d.id === id);
 }
 
 export function updateDraft(id: string, updates: Partial<DraftMessage>): DraftMessage | null {
-  const draft = draftQueue.find(d => d.id === id);
+  const queue = readDraftQueue();
+  const draft = queue.find(d => d.id === id);
   if (!draft) return null;
   Object.assign(draft, updates);
+  writeDraftQueue(queue);
   return draft;
 }
 
 export function removeDraft(id: string): boolean {
-  const idx = draftQueue.findIndex(d => d.id === id);
+  const queue = readDraftQueue();
+  const idx = queue.findIndex(d => d.id === id);
   if (idx === -1) return false;
-  draftQueue.splice(idx, 1);
+  queue.splice(idx, 1);
+  writeDraftQueue(queue);
   return true;
 }
 
 export function getSentTodayCount(): number {
   const today = new Date().toISOString().split('T')[0];
-  return draftQueue.filter(d => d.status === 'sent' && d.sent_at?.startsWith(today)).length;
+  return readDraftQueue().filter(d => d.status === 'sent' && d.sent_at?.startsWith(today)).length;
 }
 
 // ============================================

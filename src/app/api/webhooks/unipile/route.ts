@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server';
-import { getConfig, isAgentEnabled } from '@/lib/database';
-import { generateResponse } from '@/lib/claude';
-import { getNextState, shouldAutoRespond } from '@/lib/state-machine';
-import { sendMessage, verifyChatOwnership } from '@/lib/unipile';
-import { runSafetyChecks, markAsResponded } from '@/lib/safety';
+import { getAgentMode } from '@/lib/database';
+import { verifyChatOwnership } from '@/lib/unipile';
+import { isWithinWorkingHours } from '@/lib/human-timing';
 
 const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
 
@@ -28,7 +26,6 @@ export async function POST(request: Request) {
       const chatId = data.chat_id || data.chatId;
       const messageText = data.text || data.body || '';
       const messageId = data.id || data.message_id || crypto.randomUUID();
-      const timestamp = data.timestamp || new Date().toISOString();
 
       if (!chatId || !messageText) {
         return NextResponse.json({ status: 'skipped', reason: 'missing data' });
@@ -43,33 +40,23 @@ export async function POST(request: Request) {
         }
       }
 
-      // Check if agent is enabled and auto-respond is allowed
-      if (!isAgentEnabled()) {
+      // Check if agent is enabled (mode !== 'off')
+      const mode = getAgentMode();
+      if (mode === 'off') {
         return NextResponse.json({ status: 'received_but_agent_disabled' });
       }
 
-      const config = getConfig();
-
-      const safety = runSafetyChecks(
-        chatId,
-        'prospect',
-        messageId,
-        isAgentEnabled(),
-        true, // auto_respond - will be checked per conversation later
-        config.rules.working_hours_start,
-        config.rules.working_hours_end,
-      );
-
-      if (!safety.allowed) {
-        console.log(`[Webhook] Safety block: ${safety.reason}`);
-        return NextResponse.json({ status: 'received_but_blocked', reason: safety.reason });
+      // Working hours check
+      if (!isWithinWorkingHours()) {
+        return NextResponse.json({ status: 'received_but_outside_hours' });
       }
 
-      // For now, just acknowledge receipt — agent respond is triggered separately
+      // Acknowledge receipt — actual processing happens via /api/agent/cron
       return NextResponse.json({
         status: 'received',
         chat_id: chatId,
         message_id: messageId,
+        mode,
       });
     }
 
@@ -84,7 +71,7 @@ export async function GET() {
   return NextResponse.json({
     status: 'ok',
     message: 'Unipile webhook endpoint active',
-    agent_enabled: isAgentEnabled(),
+    agent_mode: getAgentMode(),
     account_locked: !!ACCOUNT_ID,
   });
 }

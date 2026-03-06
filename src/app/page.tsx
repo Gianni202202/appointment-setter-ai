@@ -196,8 +196,16 @@ export default function Dashboard() {
         const data = await res.json();
         showToast(`✓ Created ${data.drafts_created} drafts out of ${data.processed} chats`, 'success');
         setSelectedChatIds(new Set());
-        // Refresh both lists
-        await Promise.all([loadAll(), loadCopilotChats()]);
+        // Refresh only the draft queue (not the full page)
+        try {
+          const qRes = await fetch('/api/agent/queue');
+          if (qRes.ok) {
+            const q = await qRes.json();
+            setDrafts(q.drafts || []);
+            setSentToday(q.sent_today || 0);
+          }
+        } catch {}
+        // Don't reload chats — they're still visible for re-selection
       } else {
         const err = await res.json();
         showToast('✕ ' + (err.error || 'Generation failed'), 'error');
@@ -208,15 +216,23 @@ export default function Dashboard() {
 
   async function handleDraftAction(draftId: string, action: 'approve' | 'reject') {
     try {
-      // Find the draft for learning recording
       const draft = drafts.find(d => d.id === draftId);
-      
-      await fetch('/api/agent/queue', {
+
+      const res = await fetch('/api/agent/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ draft_id: draftId, action }),
       });
-      
+
+      if (res.ok) {
+        // Update drafts locally without full reload (prevents UI jumps)
+        if (action === 'approve') {
+          setDrafts(prev => prev.map(d => d.id === draftId ? { ...d, status: 'approved', approved_at: new Date().toISOString() } : d));
+        } else {
+          setDrafts(prev => prev.filter(d => d.id !== draftId));
+        }
+      }
+
       // Record outcome for self-learning (fire and forget)
       if (draft) {
         fetch('/api/agent/learn', {
@@ -230,11 +246,10 @@ export default function Dashboard() {
             outcome: action === 'approve' ? 'approved' : 'rejected',
             sentiment: (draft as any).sentiment || 'neutral',
           }),
-        }).catch(() => {}); // Non-blocking
+        }).catch(() => {});
       }
-      
-      await loadAll();
-      showToast(action === 'approve' ? '✓ Draft approved' : '✗ Draft rejected', action === 'approve' ? 'success' : 'error');
+
+      showToast(action === 'approve' ? '✓ Draft approved — go to Step 3 to send' : '✗ Draft removed', action === 'approve' ? 'success' : 'info');
     } catch (err) { showToast('Action failed: ' + err, 'error'); }
   }
 
@@ -251,7 +266,15 @@ export default function Dashboard() {
       if (res.ok) {
         const data = await res.json();
         showToast(`✓ ${data.scheduled_count} messages scheduled with human-like timing`, 'success');
-        await loadAll();
+        // Refresh only drafts, not full page
+        try {
+          const qRes = await fetch('/api/agent/queue');
+          if (qRes.ok) {
+            const q = await qRes.json();
+            setDrafts(q.drafts || []);
+            setSentToday(q.sent_today || 0);
+          }
+        } catch {}
       } else {
         const err = await res.json();
         showToast('✕ ' + (err.error || 'Send failed'), 'error');
@@ -497,8 +520,8 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Step 2: Review & Approve Drafts */}
-          {(pendingDrafts.length > 0 || approvedDrafts.length > 0) && (
+          {/* Step 2: Review & Approve Drafts — always visible in copilot */}
+          {(
             <div className="glass-card" style={{ padding: '20px', marginBottom: '16px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                 <h2 style={{ fontSize: '16px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -508,10 +531,16 @@ export default function Dashboard() {
                     background: 'rgba(245,158,11,0.2)', color: '#F59E0B',
                   }}>2</span>
                   Review Drafts
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400, marginLeft: '8px' }}>(approving does NOT send)</span>
                   {pendingDrafts.length > 0 && <span className="badge badge-warning">{pendingDrafts.length} pending</span>}
                 </h2>
               </div>
 
+              {pendingDrafts.length === 0 && approvedDrafts.length === 0 ? (
+                <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+                  No drafts yet — select chats in Step 1 and click Generate
+                </div>
+              ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 {[...pendingDrafts, ...approvedDrafts].map(draft => (
                   <div key={draft.id} style={{
@@ -559,15 +588,17 @@ export default function Dashboard() {
                             className="btn-success"
                             onClick={() => handleDraftAction(draft.id, 'approve')}
                             style={{ padding: '8px 16px', fontSize: '12px' }}
+                            title="Approve this draft — it will NOT be sent yet. You send in Step 3."
                           >
-                            ✓ Approve
+                            ✓ Approve Draft
                           </button>
                           <button
-                            className="btn-danger"
+                            className="btn-secondary"
                             onClick={() => handleDraftAction(draft.id, 'reject')}
-                            style={{ padding: '8px 16px', fontSize: '12px' }}
+                            style={{ padding: '8px 16px', fontSize: '12px', color: 'var(--danger)' }}
+                            title="Remove this draft"
                           >
-                            ✕ Reject
+                            ✕ Remove
                           </button>
                         </div>
                       )}
@@ -575,6 +606,7 @@ export default function Dashboard() {
                   </div>
                 ))}
               </div>
+              )}
             </div>
           )}
 

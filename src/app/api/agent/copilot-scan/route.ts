@@ -41,7 +41,7 @@ export async function POST(request: Request) {
     const config = getConfig();
     const results: { chat_id: string; prospect: string; status: string; message?: string }[] = [];
 
-    for (const chatId of toProcess.slice(0, 10)) {
+    for (const chatId of toProcess.slice(0, 25)) { // Process up to 25 chats per batch
       try {
         // 1. Fetch chat info
         const chatRes = await fetch(`https://${DSN}/api/v1/chats/${chatId}`, {
@@ -168,108 +168,3 @@ export async function POST(request: Request) {
   }
 }
 
-/**
- * GET — List all chats that need attention (last message from prospect).
- * Used by the dashboard to show selectable conversations.
- */
-/**
- * GET — List all chats that need attention (last message from prospect).
- * Robust: checks multiple Unipile field formats for sender detection.
- */
-/**
- * GET — List ALL chats from LinkedIn for copilot selection.
- * Uses the same Unipile API as conversations page (which works).
- * Marks which chats have the prospect's last message vs ours.
- */
-export async function GET() {
-  try {
-    if (!DSN || !API_KEY || !ACCOUNT_ID) {
-      return NextResponse.json({ error: 'Unipile not configured', needs_attention: [], total_scanned: 0 }, { status: 400 });
-    }
-
-    // Fetch ALL chats (same approach as /api/conversations which works)
-    const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=250`, {
-      headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-      cache: 'no-store',
-    });
-
-    if (!chatsRes.ok) {
-      const errText = await chatsRes.text();
-      console.error('[Copilot Scan GET] Unipile error:', chatsRes.status, errText);
-      return NextResponse.json({ error: 'Failed to fetch from LinkedIn', needs_attention: [], total_scanned: 0 }, { status: 500 });
-    }
-
-    const chatsData = await chatsRes.json();
-    const chats = chatsData.items || chatsData || [];
-    console.log('[Copilot Scan GET] Fetched', chats.length, 'chats from Unipile');
-
-    const existingDraftChatIds = new Set(
-      getDrafts().filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
-    );
-
-    const needsAttention: any[] = [];
-
-    for (const chat of chats) {
-      // Skip chats from other accounts
-      if (chat.account_id && chat.account_id !== ACCOUNT_ID) continue;
-      
-      // Skip chats that already have drafts
-      if (existingDraftChatIds.has(chat.id)) continue;
-
-      // Extract prospect name
-      let prospectName = 'LinkedIn Contact';
-      if (chat.attendees && Array.isArray(chat.attendees)) {
-        for (const a of chat.attendees) {
-          if (a.is_me) continue;
-          prospectName = a.display_name || a.name || a.identifier || prospectName;
-          break;
-        }
-      }
-      if (prospectName === 'LinkedIn Contact') {
-        prospectName = chat.name || chat.title || prospectName;
-      }
-
-      // Get last message info
-      const lastMsg = chat.last_message;
-      const lastMessageText = lastMsg?.text || '';
-      const lastMessageAt = lastMsg?.timestamp || chat.last_message_at || chat.updated_at || '';
-      
-      // Skip empty chats
-      if (!lastMessageText && !lastMessageAt) continue;
-
-      // Determine if last message is from prospect (try multiple Unipile formats)
-      const isSentByMe = lastMsg ? (
-        lastMsg.is_sender === true || 
-        lastMsg.sender?.is_me === true ||
-        (lastMsg.sender_id && lastMsg.sender_id === ACCOUNT_ID)
-      ) : false;
-
-      needsAttention.push({
-        chat_id: chat.id,
-        prospect_name: prospectName,
-        last_message_preview: lastMessageText.substring(0, 120),
-        last_message_at: lastMessageAt,
-        has_draft: false,
-        is_prospect_last: !isSentByMe, // Let dashboard show who sent last
-        message_count: chat.messages_count || 0,
-      });
-    }
-
-    // Sort: prospect's last message first, then by date
-    needsAttention.sort((a: any, b: any) => {
-      if (a.is_prospect_last && !b.is_prospect_last) return -1;
-      if (!a.is_prospect_last && b.is_prospect_last) return 1;
-      return new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime();
-    });
-
-    console.log('[Copilot Scan GET] Returning', needsAttention.length, 'chats for copilot');
-
-    return NextResponse.json({
-      needs_attention: needsAttention,
-      total_scanned: chats.length,
-    });
-  } catch (error) {
-    console.error('[Copilot Scan GET] Error:', error);
-    return NextResponse.json({ error: String(error), needs_attention: [], total_scanned: 0 }, { status: 500 });
-  }
-}

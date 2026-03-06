@@ -131,8 +131,8 @@ export async function PUT(request: Request) {
       results.push({ id, status: 'scheduled', scheduled_at: sendAt.toISOString() });
     }
 
-    // Start background sending process
-    processScheduledSends();
+    // Sends are now processed by /api/agent/cron (Vercel Cron Job)
+    // No more setTimeout — Vercel serverless kills those
 
     return NextResponse.json({
       success: true,
@@ -145,35 +145,51 @@ export async function PUT(request: Request) {
   }
 }
 
-// Background process: send scheduled messages when their time arrives
-async function processScheduledSends() {
+/**
+ * Process scheduled sends INLINE (no setTimeout — Vercel kills those).
+ * Only sends messages whose scheduled_send_at is in the past.
+ * Called by the Vercel cron job at /api/agent/cron.
+ */
+export async function processScheduledSends(): Promise<{ sent: number; skipped: number; failed: number }> {
   const approved = getDrafts('approved').filter(d => d.scheduled_send_at);
+  let sent = 0, skipped = 0, failed = 0;
 
   for (const draft of approved) {
     const sendAt = new Date(draft.scheduled_send_at!).getTime();
-    const delay = Math.max(0, sendAt - Date.now());
+    
+    // Only send if the scheduled time has passed
+    if (sendAt > Date.now()) {
+      skipped++;
+      continue;
+    }
 
-    setTimeout(async () => {
-      try {
-        if (!isWithinWorkingHours()) {
-          const nextWindow = getNextWorkingWindow();
-          updateDraft(draft.id, { scheduled_send_at: nextWindow.toISOString() });
-          return;
-        }
+    // Working hours check
+    if (!isWithinWorkingHours()) {
+      const nextWindow = getNextWorkingWindow();
+      updateDraft(draft.id, { scheduled_send_at: nextWindow.toISOString() });
+      skipped++;
+      continue;
+    }
 
-        const dailyCap = getDailyCapacity(0);
-        if (getSentTodayCount() >= dailyCap) {
-          updateDraft(draft.id, { status: 'pending', scheduled_send_at: undefined });
-          return;
-        }
+    // Daily cap check
+    const dailyCap = getDailyCapacity(0);
+    if (getSentTodayCount() >= dailyCap) {
+      updateDraft(draft.id, { status: 'pending', scheduled_send_at: undefined });
+      skipped++;
+      continue;
+    }
 
-        await sendMessage(draft.chat_id, draft.message);
-        updateDraft(draft.id, { status: 'sent', sent_at: new Date().toISOString() });
-        console.log('[Queue] Sent:', draft.id, 'to', draft.prospect_name);
-      } catch (err) {
-        updateDraft(draft.id, { status: 'failed' });
-        console.error('[Queue] Failed to send:', draft.id, err);
-      }
-    }, delay);
+    try {
+      await sendMessage(draft.chat_id, draft.message);
+      updateDraft(draft.id, { status: 'sent', sent_at: new Date().toISOString() });
+      console.log('[Queue] ✓ Sent:', draft.id, 'to', draft.prospect_name);
+      sent++;
+    } catch (err) {
+      updateDraft(draft.id, { status: 'failed' });
+      console.error('[Queue] ✕ Failed:', draft.id, err);
+      failed++;
+    }
   }
+
+  return { sent, skipped, failed };
 }

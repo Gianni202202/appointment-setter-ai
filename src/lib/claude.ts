@@ -2,6 +2,7 @@ import { Message, AgentConfig, ConversationState } from '@/types';
 import { buildLearningPromptBlock } from '@/lib/self-learning';
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+const CLAUDE_DM_MODEL = process.env.CLAUDE_DM_MODEL || 'claude-opus-4-20250514';
 
 // ============================================
 // GIANNI LINSSEN — FULL SYSTEM PROMPT
@@ -545,7 +546,7 @@ Houd je verder aan alle andere regels.`;
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-opus-4-20250514',
+      model: CLAUDE_DM_MODEL,
       max_tokens: 1024,
       system: systemPrompt,
       messages: conversationHistory,
