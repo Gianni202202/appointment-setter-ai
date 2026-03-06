@@ -68,10 +68,10 @@ export async function POST(request: Request) {
     });
 
     const mode = getAgentMode();
-    const drafts = getDrafts();
+    const drafts = await getDrafts();
     const pendingDrafts = drafts.filter(d => d.status === 'pending');
     const approvedDrafts = drafts.filter(d => d.status === 'approved');
-    const sentToday = getSentTodayCount();
+    const sentToday = await getSentTodayCount();
     const dailyCap = getDailyCapacity(0);
     const scanSettings = getAgentScanSettings();
     const chatHistory = getAgentChatHistory().slice(-10);
@@ -239,7 +239,7 @@ export async function POST(request: Request) {
               const chatsData = await chatsRes.json();
               const chats = chatsData.items || chatsData || [];
               const existingDraftChatIds = new Set(
-                getDrafts().filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
+                (await getDrafts()).filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
               );
               let totalActive = 0, alreadyDrafted = 0, prospectLast = 0, youLast = 0;
               for (const chat of chats) {
@@ -287,7 +287,7 @@ export async function POST(request: Request) {
               const chatsData = await chatsRes.json();
               const chats = chatsData.items || chatsData || [];
               const existingDraftChatIds = new Set(
-                getDrafts().filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
+                (await getDrafts()).filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
               );
               for (const chat of chats) {
                 if (chat.account_id && chat.account_id !== ACCOUNT_ID) continue;

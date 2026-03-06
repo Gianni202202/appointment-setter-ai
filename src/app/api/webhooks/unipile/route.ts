@@ -119,7 +119,7 @@ export async function POST(request: Request) {
           });
 
           if (aiResponse.message && !aiResponse.message.includes('[AI response could not be parsed')) {
-            const draft = addDraft({
+            const draft = await addDraft({
               chat_id: chatId,
               prospect_name: prospectName,
               prospect_headline: '',
@@ -129,7 +129,7 @@ export async function POST(request: Request) {
               confidence: aiResponse.confidence || 'medium',
             });
 
-            logActivity('draft_created', prospectName, {
+            await logActivity('draft_created', prospectName, {
               chat_id: chatId,
               draft_id: draft.id,
               source: 'webhook_auto',

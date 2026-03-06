@@ -51,7 +51,7 @@ export async function GET(request: Request) {
 
       // Find chats that need attention (no existing draft)
       const existingDraftChatIds = new Set(
-        getDrafts().filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
+        (await getDrafts()).filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
       );
 
       const chatIdsToProcess: string[] = [];

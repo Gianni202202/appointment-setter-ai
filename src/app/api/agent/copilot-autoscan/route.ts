@@ -21,7 +21,7 @@ async function scanChats(targetCount: number, cursor: string | null) {
   let fetched = 0;
 
   // Get existing drafts to mark
-  const existingDrafts = getDrafts();
+  const existingDrafts = await getDrafts();
   const draftChatIds = new Set(
     existingDrafts.filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
   );
@@ -325,7 +325,7 @@ async function generateDraftForChat(chatId: string) {
   }, undefined, undefined, true); // legendaryContext=undefined, customInstruction=undefined, useBulkModel=true
 
   if (aiResponse.message && !aiResponse.message.includes('[AI kon geen antwoord')) {
-    const draft = addDraft({
+    const draft = await addDraft({
       chat_id: chatId,
       prospect_name: prospectName,
       prospect_headline: prospectHeadline,
@@ -335,7 +335,7 @@ async function generateDraftForChat(chatId: string) {
       confidence: aiResponse.confidence,
     });
 
-    logActivity('draft_created', prospectName, {
+    await logActivity('draft_created', prospectName, {
       chat_id: chatId,
       draft_id: draft.id,
       source: 'copilot_autoscan',

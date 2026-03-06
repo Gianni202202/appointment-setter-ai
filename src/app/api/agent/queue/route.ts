@@ -7,16 +7,16 @@ import { calculateReplyDelay, calculateTypingDelay, calculateCrossChatStagger, c
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status') || undefined;
-  const drafts = getDrafts(status);
-  const sentToday = getSentTodayCount();
+  const drafts = await getDrafts(status);
+  const sentToday = await getSentTodayCount();
   const dailyCap = getDailyCapacity(0); // TODO: track yesterday's sends
   return NextResponse.json({
     drafts,
     counts: {
-      pending: getDrafts('pending').length,
-      approved: getDrafts('approved').length,
-      sent: getDrafts('sent').length,
-      rejected: getDrafts('rejected').length,
+      pending: (await getDrafts('pending')).length,
+      approved: (await getDrafts('approved')).length,
+      sent: (await getDrafts('sent')).length,
+      rejected: (await getDrafts('rejected')).length,
     },
     sent_today: sentToday,
     max_daily: dailyCap,
@@ -33,24 +33,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'draft_id is required' }, { status: 400 });
     }
 
-    const draft = getDraft(draft_id);
+    const draft = await getDraft(draft_id);
     if (!draft) {
       return NextResponse.json({ error: 'Draft not found' }, { status: 404 });
     }
 
     if (action === 'approve') {
-      updateDraft(draft_id, {
+      await updateDraft(draft_id, {
         status: 'approved',
         approved_at: new Date().toISOString(),
         message: message || draft.message,
       });
-      logActivity('draft_approved', draft.prospect_name || 'Unknown', { draft_id, chat_id: draft.chat_id });
-      return NextResponse.json({ success: true, draft: getDraft(draft_id) });
+      await logActivity('draft_approved', draft.prospect_name || 'Unknown', { draft_id, chat_id: draft.chat_id });
+      return NextResponse.json({ success: true, draft: await getDraft(draft_id) });
     }
 
     if (action === 'reject') {
-      updateDraft(draft_id, { status: 'rejected' });
-      logActivity('draft_rejected', draft.prospect_name || 'Unknown', { draft_id, chat_id: draft.chat_id });
+      await updateDraft(draft_id, { status: 'rejected' });
+      await logActivity('draft_rejected', draft.prospect_name || 'Unknown', { draft_id, chat_id: draft.chat_id });
       return NextResponse.json({ success: true });
     }
 
@@ -58,8 +58,8 @@ export async function POST(request: Request) {
       if (!message) {
         return NextResponse.json({ error: 'message is required for edit action' }, { status: 400 });
       }
-      updateDraft(draft_id, { message });
-      return NextResponse.json({ success: true, draft: getDraft(draft_id) });
+      await updateDraft(draft_id, { message });
+      return NextResponse.json({ success: true, draft: await getDraft(draft_id) });
     }
 
     return NextResponse.json({ error: 'Invalid action. Use: approve, reject, or edit' }, { status: 400 });
@@ -77,7 +77,7 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'draft_ids array is required' }, { status: 400 });
     }
 
-    const sentToday = getSentTodayCount();
+    const sentToday = await getSentTodayCount();
     const dailyCap = getDailyCapacity(0);
     if (sentToday >= dailyCap) {
       return NextResponse.json({
@@ -93,7 +93,7 @@ export async function PUT(request: Request) {
 
     for (let i = 0; i < toProcess.length; i++) {
       const id = toProcess[i];
-      const draft = getDraft(id);
+      const draft = await getDraft(id);
       if (!draft || (draft.status !== 'approved' && draft.status !== 'pending')) {
         results.push({ id, status: 'skipped', error: 'Not found or not approvable' });
         continue;
@@ -124,7 +124,7 @@ export async function PUT(request: Request) {
         sendAt = new Date(Date.now() + totalDelay);
       }
 
-      updateDraft(id, {
+      await updateDraft(id, {
         status: 'approved',
         approved_at: new Date().toISOString(),
         scheduled_send_at: sendAt.toISOString(),
@@ -140,7 +140,7 @@ export async function PUT(request: Request) {
       success: true,
       scheduled_count: results.filter(r => r.status === 'scheduled').length,
       results,
-      sent_today: getSentTodayCount(),
+      sent_today: await getSentTodayCount(),
     });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });

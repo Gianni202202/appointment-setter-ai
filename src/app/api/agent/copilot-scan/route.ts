@@ -27,7 +27,7 @@ export async function POST(request: Request) {
 
     // Skip chats that already have pending/approved drafts
     const existingDraftChatIds = new Set(
-      getDrafts().filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
+      (await getDrafts()).filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
     );
     const toProcess = chatIds.filter(id => !existingDraftChatIds.has(id));
 
@@ -150,7 +150,7 @@ export async function POST(request: Request) {
 
         // 6. ALWAYS add to draft queue — user decides what to send, not the AI
         if (aiResponse.message) {
-          addDraft({
+          await addDraft({
             chat_id: chatId,
             prospect_name: prospectName,
             prospect_headline: prospectHeadline,

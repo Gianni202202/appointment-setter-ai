@@ -8,9 +8,9 @@ export async function GET(request: Request) {
   const offset = parseInt(searchParams.get('offset') || '0');
   
   return NextResponse.json({
-    activities: getActivityLog(limit, offset),
-    total: getActivityCount(),
-    labels: getAllLabels(),
+    activities: await getActivityLog(limit, offset),
+    total: await getActivityCount(),
+    labels: await getAllLabels(),
   });
 }
 
@@ -21,7 +21,7 @@ export async function POST(request: Request) {
     if (!chat_id || !label) {
       return NextResponse.json({ error: 'chat_id and label are required' }, { status: 400 });
     }
-    setProspectLabel(chat_id, prospect_name || 'Unknown', label, color);
+    await setProspectLabel(chat_id, prospect_name || 'Unknown', label, color);
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
