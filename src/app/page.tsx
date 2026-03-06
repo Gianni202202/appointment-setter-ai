@@ -594,8 +594,10 @@ export default function Dashboard() {
   }
 
   async function sendApproved() {
-    const approvedIds = drafts.filter(d => d.status === 'approved').map(d => d.id);
-    if (approvedIds.length === 0) { showToast('No approved drafts to send', 'error'); return; }
+    // Only send un-scheduled approved drafts
+    const toSend = drafts.filter(d => d.status === 'approved' && !d.scheduled_send_at);
+    const approvedIds = toSend.map(d => d.id);
+    if (approvedIds.length === 0) { showToast('Geen goedgekeurde berichten om te verzenden', 'error'); return; }
     setSendingBatch(true);
     try {
       const res = await fetch('/api/agent/queue', {
@@ -605,21 +607,21 @@ export default function Dashboard() {
       });
       if (res.ok) {
         const data = await res.json();
-        showToast(`✓ ${data.scheduled_count} messages scheduled with human-like timing`, 'success');
-        // Optimistically clear approved drafts from UI so button disappears immediately
-        setDrafts(prev => prev.filter(d => !approvedIds.includes(d.id)));
-        // Also refresh from server for accuracy
+        showToast(`✓ ${data.scheduled_count} berichten ingepland met menselijke timing`, 'success');
+        // Refresh from server to get updated scheduled_send_at
         try {
           const qRes = await fetch('/api/agent/queue');
           if (qRes.ok) {
             const q = await qRes.json();
-            smartSetDrafts(q.drafts || []);
+            const serverDrafts = q.drafts || [];
+            setDrafts(serverDrafts);
+            saveDraftsToLocal(serverDrafts);
             setSentToday(q.sent_today || 0);
           }
         } catch {}
       } else {
         const err = await res.json();
-        showToast('✕ ' + (err.error || 'Send failed'), 'error');
+        showToast('✕ ' + (err.error || 'Verzenden mislukt'), 'error');
       }
     } catch (err) { showToast('✕ Error: ' + err, 'error'); }
     finally { setSendingBatch(false); }
@@ -633,8 +635,12 @@ export default function Dashboard() {
         body: JSON.stringify({ action: 'cancel', draft_id: draftId }),
       });
       if (res.ok) {
-        // Remove from UI immediately
-        setDrafts(prev => prev.filter(d => d.id !== draftId));
+        // Remove from UI AND localStorage backup
+        setDrafts(prev => {
+          const updated = prev.filter(d => d.id !== draftId);
+          saveDraftsToLocal(updated);
+          return updated;
+        });
         showToast('Verzending geannuleerd', 'info');
       } else {
         const err = await res.json();
@@ -678,6 +684,8 @@ export default function Dashboard() {
   }
 
   const pendingDrafts = drafts.filter(d => d.status === 'pending');
+  const approvedNotScheduled = drafts.filter(d => d.status === 'approved' && !d.scheduled_send_at);
+  const scheduledDrafts = drafts.filter(d => d.status === 'approved' && d.scheduled_send_at);
   const approvedDrafts = drafts.filter(d => d.status === 'approved');
   const phaseEmoji: Record<string, string> = {
     koud: '❄️', lauw: '🌤', warm: '🔥', proof: '📹', call: '📞', weerstand: '🛡️',
@@ -1123,13 +1131,13 @@ export default function Dashboard() {
                 </h2>
               </div>
 
-              {pendingDrafts.length === 0 && approvedDrafts.length === 0 ? (
+              {pendingDrafts.length === 0 ? (
                 <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
-                  No drafts yet — select chats in Step 1 and click Generate
+                  Nog geen drafts — selecteer chats in Stap 1 of gebruik Smart Co-Pilot Scan
                 </div>
               ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {[...pendingDrafts, ...approvedDrafts].map(draft => (
+                {pendingDrafts.map(draft => (
                   <div key={draft.id} style={{
                     padding: '14px', borderRadius: '12px',
                     border: draft.status === 'approved' ? '1px solid rgba(16,185,129,0.3)' : '1px solid var(--border)',
@@ -1144,20 +1152,7 @@ export default function Dashboard() {
                               {phaseEmoji[draft.phase] || '📊'} {draft.phase}
                             </span>
                           )}
-                          {draft.status === 'approved' && (
-                            <>
-                              <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', background: 'rgba(16,185,129,0.1)', color: 'var(--success)' }}>
-                                ✓ Approved
-                              </span>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); cancelDraft(draft.id); }}
-                                style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.2)', cursor: 'pointer' }}
-                                title="Annuleer deze verzending"
-                              >
-                                ✕ Annuleer
-                              </button>
-                            </>
-                          )}
+                          {/* Approved badge not needed here — approved drafts are in Step 3 */}
                         </div>
                         {editingDraftId === draft.id ? (
                           <textarea
@@ -1317,30 +1312,92 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Step 3: Send Approved */}
-          {approvedDrafts.length > 0 && (
+          {/* Step 3: Send Approved + Scheduled Overview */}
+          {(approvedNotScheduled.length > 0 || scheduledDrafts.length > 0) && (
             <div className="glass-card" style={{ padding: '20px', marginBottom: '20px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '12px' }}>
                 <h2 style={{ fontSize: '16px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{
                     width: '24px', height: '24px', borderRadius: '50%', display: 'inline-flex',
                     alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700,
                     background: 'rgba(16,185,129,0.2)', color: 'var(--success)',
                   }}>3</span>
-                  Send with Human Timing
+                  Verzenden
                 </h2>
-                <button
-                  className="btn-success"
-                  onClick={sendApproved}
-                  disabled={sendingBatch}
-                  style={{ fontSize: '13px', padding: '10px 24px' }}
-                >
-                  {sendingBatch ? '⏳ Scheduling...' : `🚀 Send ${approvedDrafts.length} Approved`}
-                </button>
+                {approvedNotScheduled.length > 0 && (
+                  <button
+                    className="btn-success"
+                    onClick={sendApproved}
+                    disabled={sendingBatch}
+                    style={{ fontSize: '13px', padding: '10px 24px' }}
+                  >
+                    {sendingBatch ? '⏳ Inplannen...' : `🚀 Verzend ${approvedNotScheduled.length} goedgekeurd`}
+                  </button>
+                )}
               </div>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', marginLeft: '32px' }}>
-                Messages will be staggered with phase-aware delays, cross-chat gaps, and read receipts to mimic human behavior.
-              </p>
+
+              {/* Approved but not yet scheduled */}
+              {approvedNotScheduled.length > 0 && (
+                <div style={{ marginBottom: '12px' }}>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px', marginLeft: '32px' }}>
+                    Berichten worden verzonden met menselijke timing — fase-bewuste vertraging, pauzes en leesbevestigingen.
+                  </div>
+                  {approvedNotScheduled.map(draft => (
+                    <div key={draft.id} style={{
+                      padding: '10px 14px', borderRadius: '10px', marginBottom: '4px',
+                      border: '1px solid rgba(16,185,129,0.2)', background: 'rgba(16,185,129,0.04)',
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px',
+                    }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ fontWeight: 600, fontSize: '13px' }}>{draft.prospect_name}</span>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>✓ Goedgekeurd</span>
+                      </div>
+                      <button
+                        onClick={() => cancelDraft(draft.id)}
+                        style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.2)', cursor: 'pointer', flexShrink: 0 }}
+                      >
+                        ✕ Annuleer
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Scheduled — waiting to be sent */}
+              {scheduledDrafts.length > 0 && (
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--accent)', marginBottom: '6px', fontWeight: 600 }}>
+                    📋 Ingepland ({scheduledDrafts.length})
+                  </div>
+                  {scheduledDrafts.map(draft => {
+                    const sendTime = draft.scheduled_send_at ? new Date(draft.scheduled_send_at) : null;
+                    const timeStr = sendTime ? sendTime.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' }) : '';
+                    return (
+                      <div key={draft.id} style={{
+                        padding: '10px 14px', borderRadius: '10px', marginBottom: '4px',
+                        border: '1px solid rgba(59,130,246,0.2)', background: 'rgba(59,130,246,0.04)',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px',
+                      }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ fontWeight: 600, fontSize: '13px' }}>{draft.prospect_name}</span>
+                          {timeStr && <span style={{ fontSize: '11px', color: 'var(--accent)', marginLeft: '8px' }}>🕐 {timeStr}</span>}
+                        </div>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '6px', background: 'rgba(59,130,246,0.1)', color: 'var(--accent)' }}>
+                            ⏳ Wacht
+                          </span>
+                          <button
+                            onClick={() => cancelDraft(draft.id)}
+                            style={{ fontSize: '11px', padding: '4px 10px', borderRadius: '6px', background: 'rgba(239,68,68,0.1)', color: 'var(--danger)', border: '1px solid rgba(239,68,68,0.2)', cursor: 'pointer', flexShrink: 0 }}
+                          >
+                            ✕ Annuleer
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </>
