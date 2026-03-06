@@ -11,16 +11,17 @@ export const maxDuration = 60;
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status') || undefined;
-  const drafts = await getDrafts(status);
+  const allDrafts = await getDrafts();
+  const filteredDrafts = status ? allDrafts.filter(d => d.status === status) : allDrafts;
   const sentToday = await getSentTodayCount();
   const dailyCap = getDailyCapacity(0); // TODO: track yesterday's sends
   return NextResponse.json({
-    drafts,
+    drafts: filteredDrafts,
     counts: {
-      pending: (await getDrafts('pending')).length,
-      approved: (await getDrafts('approved')).length,
-      sent: (await getDrafts('sent')).length,
-      rejected: (await getDrafts('rejected')).length,
+      pending: allDrafts.filter(d => d.status === 'pending').length,
+      approved: allDrafts.filter(d => d.status === 'approved').length,
+      sent: allDrafts.filter(d => d.status === 'sent').length,
+      rejected: allDrafts.filter(d => d.status === 'rejected').length,
     },
     sent_today: sentToday,
     max_daily: dailyCap,

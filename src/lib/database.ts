@@ -247,8 +247,23 @@ export async function addDraft(draft: Omit<DraftMessage, 'id' | 'status' | 'crea
     created_at: new Date().toISOString(),
   };
 
-  const queue = await rGet<DraftMessage[]>('draft:queue', []);
+  let queue = await rGet<DraftMessage[]>('draft:queue', []);
   queue.push(newDraft);
+
+  // Auto-prune: keep max 200 drafts. Remove old sent/rejected/failed first.
+  if (queue.length > 200) {
+    const today = new Date().toISOString().split('T')[0];
+    queue = queue.filter(d =>
+      d.status === 'pending' || d.status === 'approved' ||
+      (d.status === 'sent' && d.sent_at?.startsWith(today)) ||
+      d.id === newDraft.id
+    );
+    // If still too many, trim from the beginning
+    if (queue.length > 200) {
+      queue = queue.slice(-200);
+    }
+  }
+
   await rSet('draft:queue', queue);
   return newDraft;
 }

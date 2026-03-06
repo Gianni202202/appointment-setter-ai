@@ -36,7 +36,11 @@ export async function GET(request: Request) {
     const sentDrafts = (await getDrafts('sent')).filter(d => d.sent_at);
     let repliesTracked = 0;
     // Check last 10 sent messages for replies (to stay within API limits)
-    const recentSent = sentDrafts.slice(-10);
+    // Only check drafts sent in last 24h to avoid re-processing old entries
+    const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const recentSent = sentDrafts
+      .filter(d => new Date(d.sent_at!).getTime() > twentyFourHoursAgo)
+      .slice(-10);
     for (const draft of recentSent) {
       if (!draft.chat_id || !DSN || !API_KEY) continue;
       try {

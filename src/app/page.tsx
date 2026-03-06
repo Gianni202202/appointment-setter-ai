@@ -1199,6 +1199,68 @@ export default function Dashboard() {
     </div>
 
       {/* Agent Chat Interface */}
+
+      {/* Rejection Feedback Modal */}
+      {rejectingDraftId && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.6)', zIndex: 10000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          backdropFilter: 'blur(4px)',
+        }} onClick={cancelReject}>
+          <div style={{
+            background: 'var(--bg-card)', borderRadius: '16px', padding: '24px',
+            maxWidth: '420px', width: '90%', border: '1px solid var(--border)',
+            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
+          }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ fontSize: '16px', fontWeight: 700, marginBottom: '4px' }}>❌ Draft afwijzen</h3>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '16px' }}>
+              Waarom wijs je dit bericht af? Je feedback helpt de AI beter te worden.
+            </p>
+
+            {/* Quick-select reasons */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
+              {['Te lang', 'Te kort', 'Te formeel', 'Te casual', 'Verkeerde toon', 'Vraag klopt niet', 'Niet relevant', 'Te pushy'].map(reason => (
+                <button
+                  key={reason}
+                  onClick={() => setRejectionReason(reason)}
+                  style={{
+                    padding: '6px 12px', borderRadius: '8px', fontSize: '12px', border: 'none',
+                    cursor: 'pointer', transition: 'all 0.15s',
+                    background: rejectionReason === reason ? 'rgba(239,68,68,0.2)' : 'rgba(255,255,255,0.06)',
+                    color: rejectionReason === reason ? '#ef4444' : 'var(--text-muted)',
+                  }}
+                >
+                  {reason}
+                </button>
+              ))}
+            </div>
+
+            {/* Custom feedback */}
+            <textarea
+              className="input-field"
+              rows={2}
+              placeholder="Of typ je eigen feedback..."
+              value={rejectionReason}
+              onChange={e => setRejectionReason(e.target.value)}
+              style={{ resize: 'none', marginBottom: '16px', fontSize: '13px' }}
+            />
+
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button className="btn-secondary" onClick={cancelReject} style={{ fontSize: '13px', padding: '8px 16px' }}>
+                Annuleren
+              </button>
+              <button className="btn-secondary" onClick={() => handleDraftAction(rejectingDraftId, 'reject')} style={{ fontSize: '13px', padding: '8px 16px', color: 'var(--text-muted)' }}>
+                Afwijzen zonder feedback
+              </button>
+              <button className="btn-primary" onClick={confirmReject} style={{ fontSize: '13px', padding: '8px 16px', background: 'rgba(239,68,68,0.8)' }}>
+                Afwijzen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <AgentChat
         onModeChange={(m) => { setMode(m as AgentMode); localStorage.setItem('agent-mode', m); }}
         onRefreshDashboard={async () => {
