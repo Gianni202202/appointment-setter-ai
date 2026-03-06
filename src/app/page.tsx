@@ -37,6 +37,8 @@ export default function Dashboard() {
   const [selectedChatIds, setSelectedChatIds] = useState<Set<string>>(new Set());
   const [generating, setGenerating] = useState(false);
   const [generatingProgress, setGeneratingProgress] = useState('');
+  const [expandedDrafts, setExpandedDrafts] = useState<Record<string, any[]>>({});
+  const [loadingConversation, setLoadingConversation] = useState<string | null>(null);
 
   // Draft queue
   const [drafts, setDrafts] = useState<DraftMessage[]>([]);
@@ -50,6 +52,47 @@ export default function Dashboard() {
   const [loadingChats, setLoadingChats] = useState(false);
 
   const router = useRouter();
+
+  // === DRAFT PERSISTENCE ===
+  // Server uses /tmp which Vercel wipes on cold starts.
+  // We keep localStorage as backup and merge intelligently.
+  function saveDraftsToLocal(d: DraftMessage[]) {
+    try { localStorage.setItem('drafts-backup', JSON.stringify(d)); } catch {}
+  }
+  function loadDraftsFromLocal(): DraftMessage[] {
+    try {
+      const s = localStorage.getItem('drafts-backup');
+      return s ? JSON.parse(s) : [];
+    } catch { return []; }
+  }
+  // Merge server drafts with local backup — keep the most complete set
+  function mergeDrafts(serverDrafts: DraftMessage[], localDrafts: DraftMessage[]): DraftMessage[] {
+    const byId = new Map<string, DraftMessage>();
+    // Local first (as baseline)
+    for (const d of localDrafts) byId.set(d.id, d);
+    // Server overrides (server is authoritative if it has data)
+    for (const d of serverDrafts) byId.set(d.id, d);
+    // Filter out rejected/sent (unless sent today)
+    const today = new Date().toISOString().split('T')[0];
+    return Array.from(byId.values()).filter(d =>
+      d.status === 'pending' || d.status === 'approved' ||
+      (d.status === 'sent' && (d as any).sent_at?.startsWith(today))
+    );
+  }
+  function smartSetDrafts(serverDrafts: DraftMessage[]) {
+    const localDrafts = loadDraftsFromLocal();
+    // If server returned empty but we have local data, DON'T overwrite
+    // (This means Vercel cold-started and lost /tmp)
+    if (serverDrafts.length === 0 && localDrafts.length > 0) {
+      console.log('[Drafts] Server returned empty, keeping local backup (' + localDrafts.length + ' drafts)');
+      setDrafts(localDrafts);
+      return;
+    }
+    const merged = mergeDrafts(serverDrafts, localDrafts);
+    setDrafts(merged);
+    saveDraftsToLocal(merged);
+  }
+
 
   function showToast(msg: string, type: 'success' | 'error' | 'info' = 'info') {
     setToast({ msg, type });
@@ -82,7 +125,7 @@ export default function Dashboard() {
 
       if (queueRes.ok) {
         const q = await queueRes.json();
-        setDrafts(q.drafts || []);
+        smartSetDrafts(q.drafts || []);
         setSentToday(q.sent_today || 0);
         setMaxDaily(q.max_daily || 15);
       }
@@ -130,7 +173,7 @@ export default function Dashboard() {
         const res = await fetch('/api/agent/queue');
         if (res.ok) {
           const q = await res.json();
-          setDrafts(q.drafts || []);
+          smartSetDrafts(q.drafts || []);
           setSentToday(q.sent_today || 0);
         }
       } catch {}
@@ -201,7 +244,7 @@ export default function Dashboard() {
           const qRes = await fetch('/api/agent/queue');
           if (qRes.ok) {
             const q = await qRes.json();
-            setDrafts(q.drafts || []);
+            smartSetDrafts(q.drafts || []);
             setSentToday(q.sent_today || 0);
           }
         } catch {}
@@ -212,6 +255,25 @@ export default function Dashboard() {
       }
     } catch (err) { showToast('✕ Error: ' + err, 'error'); }
     finally { setGenerating(false); setGeneratingProgress(''); }
+  }
+
+  async function toggleConversation(draftId: string, chatId: string) {
+    if (expandedDrafts[draftId]) {
+      setExpandedDrafts(prev => { const next = {...prev}; delete next[draftId]; return next; });
+      return;
+    }
+    setLoadingConversation(draftId);
+    try {
+      const res = await fetch(`/api/messages?chat_id=${chatId}&limit=15`);
+      if (res.ok) {
+        const data = await res.json();
+        const msgs = data.messages || data.items || data || [];
+        setExpandedDrafts(prev => ({ ...prev, [draftId]: msgs }));
+      }
+    } catch (e) {
+      console.error('Failed to load conversation:', e);
+    }
+    setLoadingConversation(null);
   }
 
   async function handleDraftAction(draftId: string, action: 'approve' | 'reject') {
@@ -227,9 +289,17 @@ export default function Dashboard() {
       if (res.ok) {
         // Update drafts locally without full reload (prevents UI jumps)
         if (action === 'approve') {
-          setDrafts(prev => prev.map(d => d.id === draftId ? { ...d, status: 'approved', approved_at: new Date().toISOString() } : d));
+          setDrafts(prev => {
+            const updated = prev.map(d => d.id === draftId ? { ...d, status: 'approved', approved_at: new Date().toISOString() } : d);
+            saveDraftsToLocal(updated);
+            return updated;
+          });
         } else {
-          setDrafts(prev => prev.filter(d => d.id !== draftId));
+          setDrafts(prev => {
+            const updated = prev.filter(d => d.id !== draftId);
+            saveDraftsToLocal(updated);
+            return updated;
+          });
         }
       }
 
@@ -571,6 +641,47 @@ export default function Dashboard() {
                         }}>
                           {draft.message}
                         </div>
+                        <button
+                          onClick={() => toggleConversation(draft.id, draft.chat_id)}
+                          style={{
+                            marginTop: '8px', padding: '4px 10px', fontSize: '11px',
+                            background: expandedDrafts[draft.id] ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.05)',
+                            border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px',
+                            color: 'var(--text-muted)', cursor: 'pointer',
+                          }}
+                        >
+                          {loadingConversation === draft.id ? '⏳ Loading...' : expandedDrafts[draft.id] ? '▼ Hide Conversation' : '▶ View Conversation'}
+                        </button>
+                        {expandedDrafts[draft.id] && (
+                          <div style={{
+                            marginTop: '8px', padding: '10px', borderRadius: '8px',
+                            background: 'rgba(0,0,0,0.2)', maxHeight: '300px', overflowY: 'auto',
+                            border: '1px solid rgba(255,255,255,0.06)',
+                          }}>
+                            {expandedDrafts[draft.id].length === 0 ? (
+                              <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>No messages found</div>
+                            ) : (
+                              expandedDrafts[draft.id].map((msg: any, i: number) => (
+                                <div key={i} style={{
+                                  marginBottom: '6px', padding: '6px 10px', borderRadius: '8px',
+                                  background: msg.is_sender || msg.sender?.is_me
+                                    ? 'rgba(59,130,246,0.15)'
+                                    : 'rgba(255,255,255,0.05)',
+                                  marginLeft: msg.is_sender || msg.sender?.is_me ? '40px' : '0',
+                                  marginRight: msg.is_sender || msg.sender?.is_me ? '0' : '40px',
+                                }}>
+                                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginBottom: '2px' }}>
+                                    {msg.is_sender || msg.sender?.is_me ? '🟦 Jij' : '🟢 ' + draft.prospect_name}
+                                    {msg.timestamp && <span> · {new Date(msg.timestamp || msg.date).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>}
+                                  </div>
+                                  <div style={{ fontSize: '12px', color: 'var(--text-primary)', whiteSpace: 'pre-wrap' }}>
+                                    {msg.text || msg.body || '(no text)'}
+                                  </div>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
                         {draft.reasoning && (
                           <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px', fontStyle: 'italic' }}>
                             💭 {draft.reasoning.substring(0, 200)}{draft.reasoning.length > 200 ? '...' : ''}
@@ -709,7 +820,16 @@ export default function Dashboard() {
       {/* Agent Chat Interface */}
       <AgentChat
         onModeChange={(m) => { setMode(m as AgentMode); localStorage.setItem('agent-mode', m); }}
-        onRefreshDashboard={loadAll}
+        onRefreshDashboard={async () => {
+          try {
+            const qRes = await fetch('/api/agent/queue');
+            if (qRes.ok) {
+              const q = await qRes.json();
+              smartSetDrafts(q.drafts || []);
+              setSentToday(q.sent_today || 0);
+            }
+          } catch {}
+        }}
       />
     </>
   );

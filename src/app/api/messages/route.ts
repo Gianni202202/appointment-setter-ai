@@ -4,6 +4,45 @@ const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
 const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
 
+
+// GET — fetch messages for a chat
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const chatId = searchParams.get('chat_id');
+  const limit = searchParams.get('limit') || '20';
+
+  if (!chatId) {
+    return NextResponse.json({ error: 'chat_id is required' }, { status: 400 });
+  }
+
+  if (!DSN || !API_KEY) {
+    return NextResponse.json({ error: 'Unipile not configured' }, { status: 400 });
+  }
+
+  try {
+    const res = await fetch(`https://${DSN}/api/v1/chats/${chatId}/messages?limit=${limit}`, {
+      headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      return NextResponse.json({ error: 'Failed to fetch messages' }, { status: 500 });
+    }
+
+    const data = await res.json();
+    const messages = data.items || data || [];
+    
+    // Sort oldest first
+    messages.sort((a: any, b: any) =>
+      new Date(a.timestamp || a.date || 0).getTime() - new Date(b.timestamp || b.date || 0).getTime()
+    );
+
+    return NextResponse.json({ messages });
+  } catch (error) {
+    return NextResponse.json({ error: String(error) }, { status: 500 });
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
