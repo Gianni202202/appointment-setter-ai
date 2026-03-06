@@ -30,7 +30,8 @@ Available actions:
 - {"type":"CHANGE_MODE","params":{"mode":"copilot|auto|off"}} — Switch agent mode
 - {"type":"SCAN_INBOX","params":{"maxAgeDays":7}} — Scan LinkedIn inbox
 - {"type":"UPDATE_SETTINGS","params":{"maxAgeDays":14,"phases":["warm"]}} — Update scan filters
-- {"type":"GENERATE_DRAFTS","params":{"instruction":"focus on pain points","maxAgeDays":7}} — Generate drafts with custom angle
+- {"type":"GENERATE_DRAFTS","params":{"instruction":"focus on pain points","maxAgeDays":7}} — Generate drafts for all recent chats
+- {"type":"GENERATE_DRAFTS","params":{"chat_ids":["specific_chat_id"],"instruction":"optional custom angle"}} — Generate draft for specific person(s)
 - {"type":"SHOW_STATS"} — Show dashboard statistics
 
 CRITICAL: Respond NATURALLY first, then add actions if needed. Example:
@@ -40,7 +41,18 @@ CRITICAL: Respond NATURALLY first, then add actions if needed. Example:
 [{"type":"CHANGE_MODE","params":{"mode":"copilot"}},{"type":"SCAN_INBOX","params":{"maxAgeDays":7}}]"
 
 If the user just asks a question or chats, respond without any actions block.
-Never refuse a request. Be resourceful. You are Jarvis.`;
+Never refuse a request. Be resourceful. You are Jarvis.
+
+CONTEXT AWARENESS:
+- You receive a list of ACTIVE CONVERSATIONS with names and chat IDs
+- When the user refers to someone ("haar", "hem", "die ene", a name), match it to the conversation list
+- You can generate drafts for SPECIFIC people using GENERATE_DRAFTS with their chat_ids
+- You can directly help with any conversation you see in the list
+
+PROACTIVE BEHAVIOR:
+- If the user asks to write a message for someone, find them in the conversation list and generate a draft
+- If you see chats where the prospect sent last and the user hasn't replied, mention it
+- Suggest actions based on what you see in the inbox`;
 
 export async function POST(request: Request) {
   try {
@@ -64,13 +76,46 @@ export async function POST(request: Request) {
     const scanSettings = getAgentScanSettings();
     const chatHistory = getAgentChatHistory().slice(-10);
 
+    // Build conversation context so agent knows about active chats by name
+    let conversationContext = '';
+    try {
+      if (DSN && API_KEY && ACCOUNT_ID) {
+        const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=20`, {
+          headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
+          cache: 'no-store',
+        });
+        if (chatsRes.ok) {
+          const chatsData = await chatsRes.json();
+          const chats = chatsData.items || chatsData || [];
+          const chatSummaries: string[] = [];
+          for (const chat of chats.slice(0, 15)) {
+            const name = chat.name || chat.title || 'Unknown';
+            const lastMsg = chat.last_message;
+            const lastText = lastMsg?.text ? lastMsg.text.substring(0, 60) : 'no preview';
+            const isMine = lastMsg ? (lastMsg.is_sender || lastMsg.sender?.is_me) : false;
+            const who = isMine ? 'jij' : name;
+            chatSummaries.push(`  - ${name} (chat_id: ${chat.id}) — laatste bericht van ${who}: "${lastText}"`);
+          }
+          conversationContext = '\nACTIVE CONVERSATIONS (recent):\n' + chatSummaries.join('\n');
+        }
+      }
+    } catch (e) { console.warn('[Agent Chat] Failed to build conversation context', e); }
+
+    // Build pending draft context
+    let draftContext = '';
+    if (pendingDrafts.length > 0) {
+      draftContext = '\nPENDING DRAFTS (need review):\n' + pendingDrafts.slice(0, 10).map(d =>
+        `  - ${d.prospect_name}: "${d.message.substring(0, 60)}..." (draft_id: ${d.id})`
+      ).join('\n');
+    }
+
     const contextBlock = `CURRENT STATE:
 - Mode: ${mode}
 - Pending drafts: ${pendingDrafts.length}
 - Approved drafts: ${approvedDrafts.length}
 - Sent today: ${sentToday}/${dailyCap}
 - Scan settings: maxAgeDays=${scanSettings.maxAgeDays}, phases=${scanSettings.phases.length > 0 ? scanSettings.phases.join(',') : 'all'}, limit=${scanSettings.limit}, autoSend=${scanSettings.autoSend}
-- LinkedIn connected: ${!!(DSN && API_KEY && ACCOUNT_ID)}`;
+- LinkedIn connected: ${!!(DSN && API_KEY && ACCOUNT_ID)}${conversationContext}${draftContext}`;
 
     const claudeMessages: { role: string; content: string }[] = [];
     for (const msg of chatHistory.slice(0, -1)) {
@@ -224,37 +269,34 @@ export async function POST(request: Request) {
               actionResults.push({ type: 'GENERATE_DRAFTS', result: 'LinkedIn not connected' });
               break;
             }
-            const maxAge = action.params?.maxAgeDays || scanSettings.maxAgeDays;
             const instruction = action.params?.instruction || '';
-            const cutoffDate = new Date(Date.now() - maxAge * 24 * 60 * 60 * 1000);
+            let chatIdsToProcess: string[] = action.params?.chat_ids || [];
             
-            // Fetch chats needing attention
-            const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=50`, {
-              headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-              cache: 'no-store',
-            });
-            
-            if (!chatsRes.ok) {
-              actionResults.push({ type: 'GENERATE_DRAFTS', result: 'Failed to fetch chats' });
-              break;
-            }
-            
-            const chatsData = await chatsRes.json();
-            const chats = chatsData.items || chatsData || [];
-            const existingDraftChatIds = new Set(
-              getDrafts().filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
-            );
-            
-            // Include ALL active chats (user decides which matter, not the system)
-            const chatIdsToProcess: string[] = [];
-            for (const chat of chats) {
-              if (chat.account_id && chat.account_id !== ACCOUNT_ID) continue;
-              if (existingDraftChatIds.has(chat.id)) continue;
-              const lastMsg = chat.last_message;
-              const msgDate = lastMsg?.timestamp ? new Date(lastMsg.timestamp) : null;
-              if (msgDate && msgDate < cutoffDate) continue;
-              // Include ALL chats — don't filter by who sent last
-              if (lastMsg) chatIdsToProcess.push(chat.id);
+            // If no specific chat_ids, find all active chats
+            if (chatIdsToProcess.length === 0) {
+              const maxAge = action.params?.maxAgeDays || scanSettings.maxAgeDays;
+              const cutoffDate = new Date(Date.now() - maxAge * 24 * 60 * 60 * 1000);
+              const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=50`, {
+                headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
+                cache: 'no-store',
+              });
+              if (!chatsRes.ok) {
+                actionResults.push({ type: 'GENERATE_DRAFTS', result: 'Failed to fetch chats' });
+                break;
+              }
+              const chatsData = await chatsRes.json();
+              const chats = chatsData.items || chatsData || [];
+              const existingDraftChatIds = new Set(
+                getDrafts().filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
+              );
+              for (const chat of chats) {
+                if (chat.account_id && chat.account_id !== ACCOUNT_ID) continue;
+                if (existingDraftChatIds.has(chat.id)) continue;
+                const lastMsg = chat.last_message;
+                const msgDate = lastMsg?.timestamp ? new Date(lastMsg.timestamp) : null;
+                if (msgDate && msgDate < cutoffDate) continue;
+                if (lastMsg) chatIdsToProcess.push(chat.id);
+              }
             }
             
             if (chatIdsToProcess.length === 0) {
@@ -262,7 +304,6 @@ export async function POST(request: Request) {
               break;
             }
             
-            // Call copilot-scan POST internally to generate drafts
             const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : (process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000');
             const scanRes = await fetch(`${baseUrl}/api/agent/copilot-scan`, {
               method: 'POST',
@@ -275,9 +316,10 @@ export async function POST(request: Request) {
             
             if (scanRes.ok) {
               const scanData = await scanRes.json();
+              const details = (scanData.results || []).map((r: any) => r.prospect + ': ' + r.status).join(', ');
               actionResults.push({
                 type: 'GENERATE_DRAFTS',
-                result: `${scanData.drafts_created || 0} drafts generated for ${chatIdsToProcess.length} chats${instruction ? ' with instruction: "' + instruction.substring(0, 50) + '"' : ''}`,
+                result: `${scanData.drafts_created || 0} drafts generated for ${chatIdsToProcess.length} chats. ${details}`,
               });
             } else {
               actionResults.push({ type: 'GENERATE_DRAFTS', result: 'Draft generation failed' });
