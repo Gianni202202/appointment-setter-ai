@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAgentMode, getConfig, getConversationPhase, addDraft, logActivity } from '@/lib/database';
+import { getAgentMode, getConfigAsync, getConversationPhase, addDraft, logActivity } from '@/lib/database';
 import { verifyChatOwnership } from '@/lib/unipile';
 import { isWithinWorkingHours } from '@/lib/human-timing';
 import { generateResponse } from '@/lib/claude';
@@ -105,7 +105,7 @@ export async function POST(request: Request) {
           }
 
           // Build proper config and state for generateResponse
-          const config = getConfig();
+          const config = await getConfigAsync();
           const storedPhase = getConversationPhase(chatId);
           let convState: any = messages.length <= 1 ? 'new' : 'engaged';
           if (storedPhase === 'weerstand') convState = 'objection';

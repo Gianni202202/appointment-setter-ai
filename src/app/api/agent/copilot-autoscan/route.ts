@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-import { generateResponse } from '@/lib/claude';
-import { getConfigAsync, addDraft, getDrafts, getConversationPhaseAsync, logActivity, saveScanResults, getScanResults, getLastScanTime, updateScanResult, getRejectedChats } from '@/lib/database';
+import { getDrafts, logActivity, saveScanResults, getScanResults, getLastScanTime, updateScanResult, getRejectedChats } from '@/lib/database';
 import { generateDraftForChat } from '@/lib/draft-generator';
 
 // Vercel function timeout — need 60s for Gemini calls
