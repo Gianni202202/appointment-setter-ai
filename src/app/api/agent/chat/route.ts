@@ -10,7 +10,7 @@ import { getDailyCapacity } from '@/lib/human-timing';
 // Pro plan: allow up to 60s execution
 export const maxDuration = 60;
 
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
+const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
 const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
@@ -120,46 +120,54 @@ export async function POST(request: Request) {
 - Scan settings: maxAgeDays=${scanSettings.maxAgeDays}, phases=${scanSettings.phases.length > 0 ? scanSettings.phases.join(',') : 'all'}, limit=${scanSettings.limit}, autoSend=${scanSettings.autoSend}
 - LinkedIn connected: ${!!(DSN && API_KEY && ACCOUNT_ID)}${conversationContext}${draftContext}`;
 
-    const claudeMessages: { role: string; content: string }[] = [];
+    const geminiContents: { role: string; content: string }[] = [];
     for (const msg of chatHistory.slice(0, -1)) {
-      claudeMessages.push({
+      geminiContents.push({
         role: msg.role === 'user' ? 'user' : 'assistant',
         content: msg.content,
       });
     }
-    claudeMessages.push({
+    geminiContents.push({
       role: 'user',
       content: `${contextBlock}\n\nUSER MESSAGE: ${message}`,
     });
 
-    if (!ANTHROPIC_KEY) {
+    if (!GEMINI_KEY) {
       const fallbackResponse = {
-        message: `Ik begrijp je verzoek, maar de ANTHROPIC_API_KEY is niet geconfigureerd. Status: mode=${mode}, ${pendingDrafts.length} pending drafts.`,
+        message: `Ik begrijp je verzoek, maar de GEMINI_API_KEY is niet geconfigureerd. Status: mode=${mode}, ${pendingDrafts.length} pending drafts.`,
         actions: [] as any[],
       };
       addAgentChatMessage({ role: 'agent', content: fallbackResponse.message, timestamp: new Date().toISOString(), actions: [] });
       return NextResponse.json(fallbackResponse);
     }
 
-    // Call Claude API directly via fetch (no SDK needed)
-    const apiRes = await fetch('https://api.anthropic.com/v1/messages', {
+    // Call Gemini API directly via fetch
+    // Convert messages to Gemini format
+    const geminiMessages = geminiContents.map((m) => ({
+      role: m.role === 'user' ? 'user' as const : 'model' as const,
+      parts: [{ text: m.content }],
+    }));
+
+    const apiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${GEMINI_KEY}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_KEY,
-        'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1024,
-        system: COMMAND_SYSTEM_PROMPT,
-        messages: claudeMessages,
+        systemInstruction: {
+          parts: [{ text: COMMAND_SYSTEM_PROMPT }],
+        },
+        contents: geminiMessages,
+        generationConfig: {
+          maxOutputTokens: 2048,
+          temperature: 0.7,
+        },
       }),
     });
 
     if (!apiRes.ok) {
       const errText = await apiRes.text();
-      console.error('[Agent Chat] Claude API error:', errText);
+      console.error('[Agent Chat] Gemini API error:', errText);
       const errorMsg = 'Er ging iets mis met de AI. Probeer het opnieuw.';
       addAgentChatMessage({ role: 'agent', content: errorMsg, timestamp: new Date().toISOString() });
       return NextResponse.json({ message: errorMsg, actions: [], mode });
@@ -168,8 +176,10 @@ export async function POST(request: Request) {
     const apiData = await apiRes.json();
 
     let responseText = '';
-    for (const block of apiData.content || []) {
-      if (block.type === 'text') responseText += block.text;
+    if (apiData.candidates && apiData.candidates[0]?.content?.parts) {
+      for (const part of apiData.candidates[0].content.parts) {
+        if (part.text) responseText += part.text;
+      }
     }
 
     // Parse natural response + optional actions block

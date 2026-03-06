@@ -4,7 +4,7 @@
  * HOW IT WORKS:
  * 1. Every draft the AI generates is tracked with its outcome (approved/rejected/edited)
  * 2. Patterns are extracted: which phases, openers, styles, and tones get approved vs rejected
- * 3. This learning data is fed back into Claude's prompt as "historical performance data"
+ * 3. This learning data is fed back into the AI's prompt as "historical performance data"
  * 4. The AI uses this data to improve its responses over time
  * 
  * DATA TRACKED PER DRAFT:
@@ -313,7 +313,7 @@ export async function generateInsights(): Promise<LearningInsights> {
 }
 
 /**
- * Build a learning context string to inject into Claude's prompt
+ * Build a learning context string to inject into the AI's prompt
  * This is the KEY function — it creates a summary of what the AI has learned
  * that gets added to the system prompt for every new draft generation
  */

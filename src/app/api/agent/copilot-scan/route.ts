@@ -135,7 +135,7 @@ export async function POST(request: Request) {
           currentHourCET: cetHour,
         };
 
-        // 4. Call Claude directly
+        // 4. Call Gemini directly
         const aiResponse = await generateResponse(
           config,
           state,
@@ -169,7 +169,7 @@ export async function POST(request: Request) {
             message: aiResponse.message.substring(0, 80) + '...',
           });
         } else {
-          // Claude returned no message at all — very rare edge case
+          // AI returned no message at all — very rare edge case
           results.push({
             chat_id: chatId,
             prospect: prospectName,

@@ -8,7 +8,7 @@ export const maxDuration = 60;
 const DSN = process.env.UNIPILE_DSN || '';
 const API_KEY = process.env.UNIPILE_API_KEY || '';
 const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
-const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY || '';
+const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 
 /**
  * AI Copilot — Generate a response draft WITHOUT sending.
@@ -84,15 +84,15 @@ export async function POST(request: Request) {
       }));
     }
 
-    // 3. Check if ANTHROPIC_API_KEY is set
-    if (!ANTHROPIC_KEY) {
+    // 3. Check if GEMINI_API_KEY is set
+    if (!GEMINI_KEY) {
       const lastProspectMsg = messages.filter(m => m.role === 'prospect').pop();
       return NextResponse.json({
         draft: {
           message: lastProspectMsg
             ? `Thanks for your message, ${prospectName.split(' ')[0]}. [AI KEY NOT CONFIGURED]`
             : `Hey ${prospectName.split(' ')[0]}, [AI KEY NOT CONFIGURED]`,
-          reasoning: 'ANTHROPIC_API_KEY is not set.',
+          reasoning: 'GEMINI_API_KEY is not set.',
           sentiment: 'neutral',
           needs_human: false,
           should_respond: true,
@@ -135,7 +135,7 @@ export async function POST(request: Request) {
       currentHourCET: cetHour,
     };
 
-    // 6. Generate AI response via Claude (with legendary context)
+    // 6. Generate AI response via Gemini (with legendary context)
     const config = await getConfigAsync();
     const aiResponse = await generateResponse(
       config,

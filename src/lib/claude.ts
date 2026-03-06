@@ -1,10 +1,8 @@
 import { Message, AgentConfig, ConversationState } from '@/types';
 import { buildLearningPromptBlock } from '@/lib/self-learning';
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-const CLAUDE_DM_MODEL = process.env.CLAUDE_DM_MODEL || 'claude-opus-4-20250514';
-const CLAUDE_BULK_MODEL = process.env.CLAUDE_BULK_MODEL || 'claude-sonnet-4-20250514';
-const USE_EXTENDED_THINKING = process.env.CLAUDE_EXTENDED_THINKING === 'true';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const GEMINI_MODEL = 'gemini-3-flash-preview';
 
 // ============================================
 // GIANNI LINSSEN — FULL SYSTEM PROMPT
@@ -362,7 +360,7 @@ export function qualityCheckMessage(message: string): QualityCheckResult {
 }
 
 // ============================================
-// Claude API Call
+// Gemini API Call
 // ============================================
 
 export interface ClaudeResponse {
@@ -568,36 +566,33 @@ Gebruik dit als leidraad/inspiratie voor je antwoord, maar pas het aan per prosp
 Houd je verder aan alle andere regels.`;
   }
 
-  let conversationHistory = messages.map((m) => ({
-    role: m.role === 'prospect' ? 'user' as const : 'assistant' as const,
-    content: m.content,
+  // Build Gemini-formatted conversation history
+  let conversationHistory: { role: 'user' | 'model'; parts: { text: string }[] }[] = messages.map((m) => ({
+    role: (m.role === 'prospect' ? 'user' : 'model') as 'user' | 'model',
+    parts: [{ text: m.content }],
   }));
 
-  // Claude API requires the conversation to start with 'user' role.
-  // For connection-accept chats (only agent messages), we need to prepend a user context message.
+  // For connection-accept chats (only agent messages), prepend a user context message
   const hasProspectMessages = messages.some(m => m.role === 'prospect');
 
   if (!hasProspectMessages || messages.length <= 1) {
-    // This is a connection-accept or brand new chat — prospect hasn't said anything yet
     const contextMsg = prospectInfo
       ? `[CONTEXT] Dit is een connectie die recent is geaccepteerd. Prospect profiel: Naam: ${prospectInfo.name}${prospectInfo.headline ? ', Headline: ' + prospectInfo.headline : ''}${prospectInfo.company ? ', Bedrijf: ' + prospectInfo.company : ''}. Er is nog geen gesprek gestart. Schrijf een natuurlijk eerste DM als follow-up op de connectie.`
       : '[CONTEXT] Dit is een connectie die recent is geaccepteerd. Er is nog geen gesprek gestart. Schrijf een natuurlijk eerste DM als follow-up op de connectie.';
 
-    // Rebuild: start with user context, then any existing messages
     conversationHistory = [
-      { role: 'user' as const, content: contextMsg },
-      ...conversationHistory.filter(m => m.role === 'assistant'), // keep agent messages as context
+      { role: 'user' as 'user', parts: [{ text: contextMsg }] },
+      ...conversationHistory.filter(m => m.role === 'model'),
     ];
   }
 
-  // Ensure messages alternate roles (Claude API requirement)
-  // Merge consecutive messages of the same role
+  // Merge consecutive messages of the same role (Gemini requirement)
   const mergedHistory: typeof conversationHistory = [];
   for (const msg of conversationHistory) {
     if (mergedHistory.length > 0 && mergedHistory[mergedHistory.length - 1].role === msg.role) {
-      mergedHistory[mergedHistory.length - 1].content += '\n\n' + msg.content;
+      mergedHistory[mergedHistory.length - 1].parts[0].text += '\n\n' + msg.parts[0].text;
     } else {
-      mergedHistory.push({ ...msg });
+      mergedHistory.push({ role: msg.role, parts: [{ text: msg.parts[0].text }] });
     }
   }
   conversationHistory = mergedHistory;
@@ -605,35 +600,32 @@ Houd je verder aan alle andere regels.`;
   // Final safety: ensure first message is 'user'
   if (conversationHistory.length > 0 && conversationHistory[0].role !== 'user') {
     conversationHistory.unshift({
-      role: 'user' as const,
-      content: '[CONTEXT] Schrijf een follow-up DM voor deze LinkedIn connectie.',
+      role: 'user' as 'user',
+      parts: [{ text: '[CONTEXT] Schrijf een follow-up DM voor deze LinkedIn connectie.' }],
     });
   }
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-api-key': ANTHROPIC_API_KEY,
-      'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: useBulkModel ? CLAUDE_BULK_MODEL : CLAUDE_DM_MODEL,
-      max_tokens: 16000,
-      ...(!useBulkModel && USE_EXTENDED_THINKING ? {
-        thinking: {
-          type: 'enabled',
-          budget_tokens: 10000,
-        },
-      } : {}),
-      system: systemPrompt,
-      messages: conversationHistory,
+      systemInstruction: {
+        parts: [{ text: systemPrompt }],
+      },
+      contents: conversationHistory,
+      generationConfig: {
+        maxOutputTokens: 8192,
+        temperature: 0.7,
+        responseMimeType: 'application/json',
+      },
     }),
   });
 
   if (response.status === 429) {
     // Rate limited — return a graceful error instead of crashing
-    console.warn('[Claude] Rate limited (429). Returning fallback.');
+    console.warn('[Gemini] Rate limited (429). Returning fallback.');
     return {
       message: '',
       reasoning: 'Rate limit bereikt — probeer later opnieuw',
@@ -651,26 +643,23 @@ Houd je verder aan alle andere regels.`;
 
   if (!response.ok) {
     const error = await response.text();
-    throw new Error(`Claude API error (${response.status}): ${error}`);
+    throw new Error(`Gemini API error (${response.status}): ${error}`);
   }
 
   const data = await response.json();
-  // Extended thinking returns multiple content blocks: thinking + text
+  // Gemini returns candidates[0].content.parts[0].text
   let rawContent = '{}';
-  if (data.content) {
-    for (const block of data.content) {
-      if (block.type === 'text') {
-        rawContent = block.text;
+  if (data.candidates && data.candidates[0]?.content?.parts) {
+    for (const part of data.candidates[0].content.parts) {
+      if (part.text) {
+        rawContent = part.text;
         break;
       }
-    }
-    if (rawContent === '{}' && data.content[0]?.text) {
-      rawContent = data.content[0].text;
     }
   }
 
   // === ROBUST JSON EXTRACTION ===
-  // Claude sometimes wraps JSON in markdown, adds commentary, or produces
+  // AI sometimes wraps JSON in markdown, adds commentary, or produces
   // JSON with trailing commas / unescaped characters. We try multiple strategies.
   let content = rawContent.trim();
 
@@ -692,7 +681,7 @@ Houd je verder aan alle andere regels.`;
   // Strategy 3: Fix common JSON issues
   // Remove trailing commas before } or ]
   content = content.replace(/,\s*([}\]])/g, '$1');
-  // Fix unescaped newlines inside strings (common Claude mistake)
+  // Fix unescaped newlines inside strings
   content = content.replace(/([^\\])\n/g, '$1\\n');
 
   // Try multiple parse attempts
@@ -711,8 +700,8 @@ Houd je verder aan alle andere regels.`;
 
   // Strategy 5: Build from regex extraction
   if (!parsed) {
-    console.warn('[Claude] All JSON parse strategies failed. Extracting fields via regex.');
-    console.warn('[Claude] Raw (first 500):', rawContent.substring(0, 500));
+    console.warn('[Gemini] All JSON parse strategies failed. Extracting fields via regex.');
+    console.warn('[Gemini] Raw (first 500):', rawContent.substring(0, 500));
     
     let extractedMessage = '';
     let extractedReasoning = '';
@@ -774,7 +763,7 @@ Houd je verder aan alle andere regels.`;
   }
 
   // Complete failure — return error message
-  console.error('[Claude] COMPLETE parse failure. Raw:', rawContent.substring(0, 500));
+  console.error('[Gemini] COMPLETE parse failure. Raw:', rawContent.substring(0, 500));
   return {
     reasoning: 'Complete parse failure. Raw response logged server-side.',
     message: '[AI kon geen antwoord genereren voor dit gesprek. Klik op Regenerate om opnieuw te proberen.]',

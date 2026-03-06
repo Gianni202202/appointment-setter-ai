@@ -106,7 +106,7 @@ export default function ConversationDetail() {
       console.error('AI generation failed:', err);
       setAiDraft({
         message: '',
-        reasoning: `Error: ${err}. Make sure ANTHROPIC_API_KEY is configured.`,
+        reasoning: `Error: ${err}. Make sure GEMINI_API_KEY is configured.`,
         needs_human: true,
       });
     } finally {

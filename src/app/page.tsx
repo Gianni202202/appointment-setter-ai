@@ -334,7 +334,7 @@ export default function Dashboard() {
             ));
           }
 
-          // Delay between calls to avoid rate limiting (3s for Claude)
+          // Delay between calls to avoid rate limiting (1s for Gemini)
           if (idx < interesting.length - 1) {
             await new Promise(resolve => setTimeout(resolve, 3000));
           }
@@ -628,7 +628,7 @@ export default function Dashboard() {
         <div>
           <h1 style={{ fontSize: '24px', fontWeight: 700 }}>Dashboard</h1>
           <p style={{ fontSize: '14px', color: 'var(--text-muted)', marginTop: '4px' }}>
-            AI Appointment Setter — Powered by Claude Opus 4
+            AI Appointment Setter — Powered by Gemini Flash
           </p>
         </div>
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -1151,7 +1151,7 @@ export default function Dashboard() {
             All responses go through the quality gate before sending.
           </p>
           <div style={{ marginTop: '10px', display: 'flex', gap: '6px', flexWrap: 'wrap', fontSize: '11px' }}>
-            {['Style Mirror', 'Warmth Curve', 'Phase Timing', 'Cross-Chat Stagger', 'Read Delay', 'Message Variance', 'Claude Opus 4'].map(feat => (
+            {['Style Mirror', 'Warmth Curve', 'Phase Timing', 'Cross-Chat Stagger', 'Read Delay', 'Message Variance', 'Gemini Flash'].map(feat => (
               <span key={feat} style={{
                 padding: '3px 8px', borderRadius: '6px',
                 background: 'rgba(16,185,129,0.1)', color: 'var(--success)',

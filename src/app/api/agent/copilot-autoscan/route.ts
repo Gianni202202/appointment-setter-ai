@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { generateResponse } from '@/lib/claude';
 import { getConfigAsync, addDraft, getDrafts, getConversationPhaseAsync, logActivity, saveScanResults, getScanResults, getLastScanTime, updateScanResult, getRejectedChats } from '@/lib/database';
 
-// Vercel function timeout — need 60s for Claude Opus calls
+// Vercel function timeout — need 60s for Gemini calls
 export const maxDuration = 60;
 
 const DSN = process.env.UNIPILE_DSN || '';
@@ -12,7 +12,7 @@ const ACCOUNT_ID = process.env.UNIPILE_ACCOUNT_ID || '';
 const SKIP_KEYWORDS = ['test', 'testing', 'debug', 'spam'];
 
 // =====================================================
-// PHASE 1: Fast scan — fetch + score chats (NO Claude calls)
+// PHASE 1: Fast scan — fetch + score chats (NO AI calls)
 // Returns all chats with their assessment
 // =====================================================
 async function scanChats(targetCount: number, cursor: string | null) {
