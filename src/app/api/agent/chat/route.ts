@@ -383,20 +383,24 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
             const forceRegenerate = action.params?.force_regenerate === true;
             let chatIdsToProcess: string[] = action.params?.chat_ids || [];
 
+            // Build map of old drafts per chat_id for replacement
+            const oldDraftsByChatId = new Map<string, string[]>();
+            for (const d of pendingDrafts) {
+              const existing = oldDraftsByChatId.get(d.chat_id) || [];
+              existing.push(d.id);
+              oldDraftsByChatId.set(d.chat_id, existing);
+            }
+
             // If force_regenerate with no specific chat_ids → regenerate ALL pending drafts
-            // SAFE: collect chat_ids first, generate new drafts, THEN remove old ones
-            const oldDraftsToRemove: string[] = [];
             if (forceRegenerate && chatIdsToProcess.length === 0 && pendingDrafts.length > 0) {
               chatIdsToProcess = pendingDrafts.map(d => d.chat_id);
-              for (const draft of pendingDrafts) {
-                oldDraftsToRemove.push(draft.id);
-              }
-              actionResults.push({ type: 'GENERATE_DRAFTS', result: `Regenerating ${pendingDrafts.length} drafts with new instruction...` });
+              // Deduplicate chat_ids (in case multiple drafts per chat)
+              chatIdsToProcess = [...new Set(chatIdsToProcess)];
+              actionResults.push({ type: 'GENERATE_DRAFTS', result: `Regenerating ${chatIdsToProcess.length} drafts with new instruction...` });
             }
 
             // If no specific chat_ids and not force_regenerate, find chats needing attention
             if (chatIdsToProcess.length === 0) {
-              const maxAge = action.params?.maxAgeDays || scanSettings.maxAgeDays;
               const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=50`, {
                 headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
                 cache: 'no-store',
@@ -423,19 +427,28 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
               break;
             }
 
-            // Direct function call (NOT HTTP fetch — avoids Vercel serverless timeout)
+            // Process each chat: remove old draft → generate new one (no duplicates)
             let draftsCreated = 0;
             let draftsFailed = 0;
+            let draftsRemoved = 0;
             const draftErrors: string[] = [];
 
-            for (const chatId of chatIdsToProcess.slice(0, 8)) {
+            for (const chatId of chatIdsToProcess.slice(0, 10)) {
               try {
+                // Step 1: Remove old drafts for this chat_id
+                const oldIds = oldDraftsByChatId.get(chatId) || [];
+                for (const oldId of oldIds) {
+                  await removeDraft(oldId);
+                  draftsRemoved++;
+                }
+
+                // Step 2: Generate new draft with instruction
                 const result = await generateDraftForChat(chatId, instruction || undefined);
                 if (result) {
                   draftsCreated++;
                 } else {
                   draftsFailed++;
-                  draftErrors.push(chatId.substring(0, 8) + ': no result');
+                  draftErrors.push(chatId.substring(0, 8) + ': AI returned no result');
                 }
               } catch (err: any) {
                 draftsFailed++;
@@ -443,20 +456,10 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
               }
             }
 
-            // Only remove old drafts AFTER new ones were created successfully
-            if (oldDraftsToRemove.length > 0 && draftsCreated > 0) {
-              for (const oldId of oldDraftsToRemove) {
-                await removeDraft(oldId);
-              }
-              actionResults.push({ type: 'GENERATE_DRAFTS', result: `Removed ${oldDraftsToRemove.length} old drafts` });
-            } else if (oldDraftsToRemove.length > 0 && draftsCreated === 0) {
-              actionResults.push({ type: 'GENERATE_DRAFTS', result: 'Kept old drafts because no new ones were created (safety)' });
-            }
-
-            const errorDetail = draftErrors.length > 0 ? ' Errors: ' + draftErrors.join('; ') : '';
+            const errorDetail = draftErrors.length > 0 ? ' | Errors: ' + draftErrors.join('; ') : '';
             actionResults.push({
               type: 'GENERATE_DRAFTS',
-              result: `${draftsCreated} drafts created${draftsFailed > 0 ? ', ' + draftsFailed + ' failed' : ''} (out of ${chatIdsToProcess.length} total chats)${instruction ? ' — instruction: ' + instruction.substring(0, 60) : ''}${errorDetail}`,
+              result: `${draftsCreated} new drafts created, ${draftsRemoved} old removed${draftsFailed > 0 ? ', ' + draftsFailed + ' failed' : ''} (of ${chatIdsToProcess.length} chats)${instruction ? ' — angle: ' + instruction.substring(0, 50) + '...' : ''}${errorDetail}`,
             });
             break;
           }

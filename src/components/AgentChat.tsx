@@ -54,11 +54,17 @@ export default function AgentChat({ onModeChange, onRefreshDashboard }: AgentCha
     setMessages(prev => [...prev, userMsg]);
 
     try {
+      // 90s timeout — agent may need time for draft generation
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 90000);
+
       const res = await fetch('/api/agent/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text }),
+        signal: controller.signal,
       });
+      clearTimeout(timeoutId);
 
       if (res.ok) {
         const data = await res.json();
@@ -81,17 +87,24 @@ export default function AgentChat({ onModeChange, onRefreshDashboard }: AgentCha
           onRefreshDashboard?.();
         }
       } else {
-        const err = await res.json();
+        let errMsg = 'Something went wrong';
+        try {
+          const err = await res.json();
+          errMsg = err.error || err.message || errMsg;
+        } catch {}
         setMessages(prev => [...prev, {
           role: 'agent',
-          content: '❌ Error: ' + (err.error || 'Something went wrong'),
+          content: '❌ Error (' + res.status + '): ' + errMsg,
           timestamp: new Date().toISOString(),
         }]);
       }
-    } catch (err) {
+    } catch (err: any) {
+      const isTimeout = err?.name === 'AbortError';
       setMessages(prev => [...prev, {
         role: 'agent',
-        content: '❌ Connection error. Check if the server is running.',
+        content: isTimeout
+          ? '⏳ Jarvis is bezig met je verzoek, maar het duurt langer dan verwacht. Probeer het over een minuut opnieuw.'
+          : '❌ Verbindingsfout: ' + (err?.message || 'Server niet bereikbaar. Probeer het opnieuw.'),
         timestamp: new Date().toISOString(),
       }]);
     }
