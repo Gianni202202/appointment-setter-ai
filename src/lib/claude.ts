@@ -386,7 +386,14 @@ export async function generateResponse(
   }
 
   const data = await response.json();
-  const content = data.content[0]?.text || '{}';
+  const rawContent = data.content[0]?.text || '{}';
+
+  // Strip markdown code blocks (```json ... ``` or ``` ... ```)
+  // Claude sometimes wraps JSON responses in these
+  let content = rawContent.trim();
+  if (content.startsWith('```')) {
+    content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+  }
 
   try {
     const parsed = JSON.parse(content) as ClaudeResponse;
@@ -406,17 +413,35 @@ export async function generateResponse(
 
     return parsed;
   } catch {
-    // Claude returned invalid JSON — NEVER auto-send, ALWAYS flag
+    // Fallback: try to extract the message field with regex even if full JSON fails
+    let extractedMessage = '';
+    let extractedReasoning = 'Failed to parse Claude response. Flagged for human review.';
+
+    const msgMatch = rawContent.match(/"message"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"/);
+    if (msgMatch) {
+      extractedMessage = msgMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+    }
+
+    const reasonMatch = rawContent.match(/"reasoning"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"/);
+    if (reasonMatch) {
+      extractedReasoning = reasonMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+    }
+
+    const phaseMatch = rawContent.match(/"phase"\s*:\s*"([^"]*)"/);
+    const sentimentMatch = rawContent.match(/"sentiment"\s*:\s*"([^"]*)"/);
+
+    // NEVER auto-send on parse failure, ALWAYS flag for human review
     return {
-      reasoning: 'Failed to parse Claude response. Flagged for human review.',
-      message: content,
-      sentiment: 'neutral',
+      reasoning: extractedReasoning,
+      message: extractedMessage || '[AI response could not be parsed — see reasoning]',
+      sentiment: (sentimentMatch?.[1] as 'positive' | 'neutral' | 'negative') || 'neutral',
       has_objection: false,
       objection_type: null,
       meeting_mentioned: false,
       not_interested: false,
-      should_respond: false,  // <-- was true, now false
+      should_respond: false,
       needs_human: true,
+      phase: phaseMatch?.[1] || undefined,
       confidence: 'low',
     };
   }

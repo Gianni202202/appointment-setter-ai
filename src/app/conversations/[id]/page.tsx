@@ -15,7 +15,12 @@ interface AiDraft {
   message: string;
   reasoning: string;
   sentiment?: string;
+  phase?: string;
+  mini_ja_seeking?: string;
   needs_human?: boolean;
+  has_objection?: boolean;
+  objection_type?: string | null;
+  should_respond?: boolean;
 }
 
 export default function ConversationDetail() {
@@ -36,6 +41,7 @@ export default function ConversationDetail() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sendSuccess, setSendSuccess] = useState('');
+  const [showInsights, setShowInsights] = useState(false);
 
   // Manual message
   const [manualMessage, setManualMessage] = useState('');
@@ -43,13 +49,8 @@ export default function ConversationDetail() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    fetchConversation();
-  }, [chatId]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  useEffect(() => { fetchConversation(); }, [chatId]);
+  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
   async function fetchConversation() {
     try {
@@ -75,7 +76,6 @@ export default function ConversationDetail() {
     setSendSuccess('');
 
     try {
-      // Use the test endpoint to generate without sending
       const res = await fetch('/api/agent/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -92,18 +92,22 @@ export default function ConversationDetail() {
         message: data.draft?.message || '',
         reasoning: data.draft?.reasoning || '',
         sentiment: data.draft?.sentiment || 'neutral',
+        phase: data.draft?.phase || '',
+        mini_ja_seeking: data.draft?.mini_ja_seeking || '',
         needs_human: data.draft?.needs_human || false,
+        has_objection: data.draft?.has_objection || false,
+        objection_type: data.draft?.objection_type || null,
+        should_respond: data.draft?.should_respond !== false,
       };
       setAiDraft(draft);
       setEditableDraft(draft.message);
-
-      // Focus the textarea
       setTimeout(() => textareaRef.current?.focus(), 100);
     } catch (err) {
       console.error('AI generation failed:', err);
       setAiDraft({
         message: '',
-        reasoning: `Error: ${err}. Make sure ANTHROPIC_API_KEY is configured in Vercel.`,
+        reasoning: `Error: ${err}. Make sure ANTHROPIC_API_KEY is configured.`,
+        needs_human: true,
       });
     } finally {
       setIsGenerating(false);
@@ -127,7 +131,6 @@ export default function ConversationDetail() {
         throw new Error(errData.error || 'Send failed');
       }
 
-      // Add to local messages
       setMessages(prev => [...prev, {
         id: `sent-${Date.now()}`,
         role: 'agent',
@@ -160,11 +163,23 @@ export default function ConversationDetail() {
     return name.split(' ').map(w => w[0]).join('').substring(0, 2).toUpperCase();
   }
 
+  function getPhaseLabel(phase?: string) {
+    const labels: Record<string, { label: string; color: string }> = {
+      koud: { label: '❄️ Koud', color: '#60a5fa' },
+      lauw: { label: '🌤 Lauw', color: '#fbbf24' },
+      warm: { label: '🔥 Warm', color: '#f97316' },
+      proof: { label: '📹 Proof', color: '#a78bfa' },
+      call: { label: '📞 Call', color: '#34d399' },
+      weerstand: { label: '🛡 Weerstand', color: '#f87171' },
+    };
+    return labels[phase || ''] || { label: phase || '—', color: 'var(--text-muted)' };
+  }
+
   if (loading) {
     return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-        <div className="pulse-live" style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'var(--accent)' }} />
-        <span style={{ marginLeft: '12px', color: 'var(--text-muted)' }}>Loading conversation...</span>
+      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '80vh', gap: '12px' }}>
+        <div className="pulse-live" style={{ width: '20px', height: '20px', borderRadius: '50%', background: 'var(--accent)' }} />
+        <span style={{ color: 'var(--text-muted)', fontSize: '14px' }}>Loading conversation...</span>
       </div>
     );
   }
@@ -174,21 +189,24 @@ export default function ConversationDetail() {
       <div style={{ padding: '48px', textAlign: 'center' }}>
         <p style={{ color: 'var(--danger)' }}>Error: {error}</p>
         <button className="btn-secondary" onClick={() => router.push('/conversations')} style={{ marginTop: '16px' }}>
-          ← Back to conversations
+          ← Back
         </button>
       </div>
     );
   }
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', maxHeight: '100vh' }}>
+  const phaseInfo = getPhaseLabel(aiDraft?.phase);
 
-      {/* Header with prospect info */}
-      <div className="glass-card" style={{
-        padding: '16px 24px',
-        borderRadius: '0',
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 48px)', maxWidth: '900px' }}>
+
+      {/* Header */}
+      <div style={{
+        padding: '14px 20px',
         borderBottom: '1px solid var(--border)',
-        display: 'flex', alignItems: 'center', gap: '16px',
+        display: 'flex', alignItems: 'center', gap: '14px',
+        background: 'var(--bg-secondary)',
+        borderRadius: '12px 12px 0 0',
       }}>
         <button
           onClick={() => router.push('/conversations')}
@@ -196,61 +214,54 @@ export default function ConversationDetail() {
         >
           ←
         </button>
-        <div className="avatar" style={{ width: '40px', height: '40px', fontSize: '14px', flexShrink: 0 }}>
+        <div className="avatar" style={{ width: '38px', height: '38px', fontSize: '13px' }}>
           {getInitials(prospectName)}
         </div>
         <div style={{ flex: 1 }}>
-          <div style={{ fontWeight: 600, fontSize: '16px' }}>{prospectName}</div>
+          <div style={{ fontWeight: 600, fontSize: '15px' }}>{prospectName}</div>
           {prospectHeadline && (
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>{prospectHeadline}</div>
-          )}
-          {prospectCompany && (
-            <div style={{ fontSize: '11px', color: 'var(--accent)', marginTop: '1px' }}>{prospectCompany}</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '1px' }}>{prospectHeadline}</div>
           )}
         </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <button className="btn-secondary" onClick={fetchConversation} style={{ fontSize: '13px' }}>
-            🔄 Refresh
-          </button>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)', alignSelf: 'center' }}>
-            {messages.length} messages
-          </span>
-        </div>
+        <button className="btn-secondary" onClick={fetchConversation} style={{ fontSize: '12px', padding: '6px 12px' }}>
+          🔄
+        </button>
+        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+          {messages.length} msgs
+        </span>
       </div>
 
-      {/* Messages area */}
+      {/* Messages */}
       <div style={{
-        flex: 1, overflowY: 'auto', padding: '24px',
-        display: 'flex', flexDirection: 'column', gap: '12px',
+        flex: 1, overflowY: 'auto', padding: '20px',
+        display: 'flex', flexDirection: 'column', gap: '10px',
       }}>
         {messages.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '48px', color: 'var(--text-muted)' }}>
-            <p style={{ fontSize: '14px' }}>No messages yet in this conversation.</p>
+            <p>No messages yet.</p>
           </div>
         ) : (
           messages.map((msg) => (
             <div key={msg.id} className="animate-fadeIn" style={{
-              display: 'flex',
-              flexDirection: 'column',
+              display: 'flex', flexDirection: 'column',
               alignItems: msg.role === 'prospect' ? 'flex-start' : 'flex-end',
             }}>
               <div style={{
-                maxWidth: '70%',
-                padding: '12px 16px',
+                maxWidth: '70%', padding: '11px 15px',
                 borderRadius: msg.role === 'prospect' ? '4px 16px 16px 16px' : '16px 4px 16px 16px',
                 background: msg.role === 'prospect'
                   ? 'rgba(255,255,255,0.06)'
-                  : 'linear-gradient(135deg, var(--accent), #1d63ed)',
+                  : msg.role === 'human'
+                    ? 'linear-gradient(135deg, #7c3aed, #8b5cf6)'
+                    : 'linear-gradient(135deg, var(--accent), #1d63ed)',
                 border: msg.role === 'prospect' ? '1px solid var(--border)' : 'none',
                 color: msg.role === 'prospect' ? 'var(--text-primary)' : '#fff',
-                fontSize: '14px',
-                lineHeight: '1.6',
-                whiteSpace: 'pre-wrap',
+                fontSize: '14px', lineHeight: '1.6', whiteSpace: 'pre-wrap',
               }}>
                 {msg.content}
               </div>
               <div style={{
-                fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px',
+                fontSize: '11px', color: 'var(--text-muted)', marginTop: '3px',
                 paddingLeft: msg.role === 'prospect' ? '4px' : '0',
                 paddingRight: msg.role !== 'prospect' ? '4px' : '0',
               }}>
@@ -262,83 +273,119 @@ export default function ConversationDetail() {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* AI Copilot Panel */}
+      {/* AI Copilot Panel — ONLY the message in the editable box */}
       {aiDraft && (
         <div style={{
-          padding: '16px 24px',
-          background: 'rgba(139, 92, 246, 0.06)',
           borderTop: '2px solid rgba(139, 92, 246, 0.3)',
+          background: 'rgba(139, 92, 246, 0.04)',
         }}>
-          {/* Reasoning */}
+          {/* Compact insight bar */}
           <div style={{
-            display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px',
-            fontSize: '12px', color: 'rgba(139, 92, 246, 0.9)',
+            padding: '8px 20px',
+            display: 'flex', alignItems: 'center', gap: '10px',
+            borderBottom: '1px solid rgba(139, 92, 246, 0.15)',
+            flexWrap: 'wrap',
           }}>
-            <span>🧠</span>
-            <strong>AI Reasoning:</strong>
-            <span style={{ color: 'var(--text-muted)' }}>{aiDraft.reasoning}</span>
+            <span style={{ fontSize: '12px', fontWeight: 600, color: 'rgba(139, 92, 246, 0.9)' }}>🤖 AI Draft</span>
+
+            {aiDraft.phase && (
+              <span style={{
+                fontSize: '11px', padding: '2px 8px', borderRadius: '6px',
+                background: `${phaseInfo.color}22`, color: phaseInfo.color,
+                fontWeight: 600,
+              }}>
+                {phaseInfo.label}
+              </span>
+            )}
+
+            {aiDraft.sentiment && (
+              <span style={{
+                fontSize: '11px', padding: '2px 8px', borderRadius: '6px',
+                background: aiDraft.sentiment === 'positive' ? 'rgba(16,185,129,0.12)' : aiDraft.sentiment === 'negative' ? 'rgba(239,68,68,0.12)' : 'rgba(245,158,11,0.12)',
+                color: aiDraft.sentiment === 'positive' ? '#34d399' : aiDraft.sentiment === 'negative' ? '#f87171' : '#fbbf24',
+                fontWeight: 500,
+              }}>
+                {aiDraft.sentiment}
+              </span>
+            )}
+
+            {aiDraft.needs_human && (
+              <span style={{ fontSize: '11px', color: 'var(--warning)', fontWeight: 600 }}>⚠️ Human review</span>
+            )}
+
+            <button
+              onClick={() => setShowInsights(!showInsights)}
+              style={{
+                marginLeft: 'auto', fontSize: '11px', background: 'none', border: 'none',
+                color: 'var(--text-muted)', cursor: 'pointer', textDecoration: 'underline',
+              }}
+            >
+              {showInsights ? 'Hide reasoning' : 'Show reasoning'}
+            </button>
           </div>
 
-          {aiDraft.sentiment && (
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px' }}>
-              Sentiment: <strong style={{ color: aiDraft.sentiment === 'positive' ? 'var(--success)' : aiDraft.sentiment === 'negative' ? 'var(--danger)' : 'var(--warning)' }}>
-                {aiDraft.sentiment}
-              </strong>
-              {aiDraft.needs_human && <span style={{ color: 'var(--warning)', marginLeft: '12px' }}>⚠️ AI suggests human review</span>}
+          {/* Expandable reasoning panel */}
+          {showInsights && (
+            <div style={{
+              padding: '10px 20px', fontSize: '12px', color: 'var(--text-secondary)',
+              borderBottom: '1px solid rgba(139, 92, 246, 0.1)',
+              background: 'rgba(0,0,0,0.15)',
+              lineHeight: '1.5',
+            }}>
+              <div style={{ marginBottom: '4px' }}>
+                <strong style={{ color: 'rgba(139, 92, 246, 0.8)' }}>💭 Reasoning:</strong> {aiDraft.reasoning}
+              </div>
+              {aiDraft.mini_ja_seeking && (
+                <div>
+                  <strong style={{ color: 'rgba(139, 92, 246, 0.8)' }}>🎯 Seeking:</strong> Mini-ja op <em>{aiDraft.mini_ja_seeking}</em>
+                </div>
+              )}
+              {aiDraft.has_objection && aiDraft.objection_type && (
+                <div>
+                  <strong style={{ color: '#f87171' }}>🛡 Objection:</strong> {aiDraft.objection_type}
+                </div>
+              )}
             </div>
           )}
 
-          {/* Editable draft */}
-          <div style={{ position: 'relative' }}>
+          {/* Editable message — ONLY the actual DM text */}
+          <div style={{ padding: '12px 20px' }}>
             <textarea
               ref={textareaRef}
               value={editableDraft}
               onChange={(e) => setEditableDraft(e.target.value)}
               style={{
-                width: '100%', minHeight: '80px', padding: '12px', fontSize: '14px',
-                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(139, 92, 246, 0.3)',
-                borderRadius: '8px', color: 'var(--text-primary)', resize: 'vertical',
-                fontFamily: 'inherit', lineHeight: '1.5',
+                width: '100%', minHeight: '70px', padding: '12px', fontSize: '14px',
+                background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(139, 92, 246, 0.25)',
+                borderRadius: '10px', color: 'var(--text-primary)', resize: 'vertical',
+                fontFamily: 'inherit', lineHeight: '1.5', outline: 'none',
               }}
             />
-          </div>
 
-          {/* Draft actions */}
-          <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end' }}>
-            <button
-              className="btn-secondary"
-              onClick={() => { setAiDraft(null); setEditableDraft(''); }}
-              style={{ fontSize: '13px' }}
-            >
-              ✕ Dismiss
-            </button>
-            <button
-              className="btn-secondary"
-              onClick={() => setEditableDraft(aiDraft.message)}
-              style={{ fontSize: '13px' }}
-            >
-              ↩ Reset
-            </button>
-            <button
-              className="btn-secondary"
-              onClick={generateAiDraft}
-              disabled={isGenerating}
-              style={{ fontSize: '13px' }}
-            >
-              🔄 Regenerate
-            </button>
-            <button
-              className="btn-primary"
-              onClick={() => sendMessage(editableDraft)}
-              disabled={isSending || !editableDraft.trim()}
-              style={{
-                fontSize: '13px',
-                background: 'linear-gradient(135deg, #10B981, #059669)',
-                opacity: isSending ? 0.6 : 1,
-              }}
-            >
-              {isSending ? '⏳ Sending...' : '✓ Approve & Send via LinkedIn'}
-            </button>
+            {/* Actions */}
+            <div style={{ display: 'flex', gap: '8px', marginTop: '10px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button className="btn-secondary" onClick={() => { setAiDraft(null); setEditableDraft(''); }} style={{ fontSize: '12px', padding: '8px 14px' }}>
+                ✕ Dismiss
+              </button>
+              <button className="btn-secondary" onClick={() => setEditableDraft(aiDraft.message)} style={{ fontSize: '12px', padding: '8px 14px' }}>
+                ↩ Reset
+              </button>
+              <button className="btn-secondary" onClick={generateAiDraft} disabled={isGenerating} style={{ fontSize: '12px', padding: '8px 14px' }}>
+                🔄 Regenerate
+              </button>
+              <button
+                className="btn-primary"
+                onClick={() => sendMessage(editableDraft)}
+                disabled={isSending || !editableDraft.trim()}
+                style={{
+                  fontSize: '13px', padding: '8px 18px',
+                  background: 'linear-gradient(135deg, #10B981, #059669)',
+                  opacity: (isSending || !editableDraft.trim()) ? 0.5 : 1,
+                }}
+              >
+                {isSending ? '⏳ Sending...' : '✓ Approve & Send'}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -346,28 +393,29 @@ export default function ConversationDetail() {
       {/* Success banner */}
       {sendSuccess && (
         <div style={{
-          padding: '10px 24px', background: 'rgba(16, 185, 129, 0.12)',
-          borderTop: '1px solid rgba(16, 185, 129, 0.3)', textAlign: 'center',
+          padding: '8px 20px', background: 'rgba(16, 185, 129, 0.1)',
+          borderTop: '1px solid rgba(16, 185, 129, 0.2)', textAlign: 'center',
           fontSize: '13px', color: 'var(--success)', fontWeight: 600,
         }}>
           ✓ {sendSuccess}
         </div>
       )}
 
-      {/* Bottom action bar */}
-      <div className="glass-card" style={{
-        padding: '12px 24px',
-        borderRadius: '0',
+      {/* Bottom bar */}
+      <div style={{
+        padding: '12px 20px',
         borderTop: '1px solid var(--border)',
+        background: 'var(--bg-secondary)',
+        borderRadius: '0 0 12px 12px',
       }}>
-        {/* AI Copilot button */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+        {/* Copilot button */}
+        <div style={{ marginBottom: '8px' }}>
           <button
             className="btn-primary"
             onClick={generateAiDraft}
             disabled={isGenerating || !!aiDraft}
             style={{
-              flex: 1, fontSize: '14px', padding: '10px 16px',
+              width: '100%', fontSize: '14px', padding: '10px 16px',
               opacity: (isGenerating || !!aiDraft) ? 0.5 : 1,
               background: 'linear-gradient(135deg, #8B5CF6, #6D28D9)',
             }}
@@ -375,7 +423,7 @@ export default function ConversationDetail() {
             {isGenerating ? (
               <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 <span className="pulse-live" style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#fff' }} />
-                AI is generating a response...
+                Generating...
               </span>
             ) : (
               '🤖 Generate AI Response (Copilot)'
@@ -383,13 +431,13 @@ export default function ConversationDetail() {
           </button>
         </div>
 
-        {/* Manual message input */}
+        {/* Manual input */}
         <div style={{ display: 'flex', gap: '8px' }}>
           <input
             type="text"
             className="input-field"
             placeholder="Or type a manual message..."
-            style={{ flex: 1 }}
+            style={{ flex: 1, minHeight: '40px' }}
             value={manualMessage}
             onChange={(e) => setManualMessage(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && sendMessage(manualMessage)}

@@ -1,36 +1,67 @@
 // ============================================
-// Human-Like Timing — Reply delay calculations
+// Human-Like Timing — Per-conversation reply delay calculations
+// Implements research golden nuggets from forums/Reddit
 // ============================================
 
+type ConversationPhase = 'koud' | 'lauw' | 'warm' | 'proof' | 'call' | 'weerstand' | string;
+
 /**
- * Calculate a realistic reply delay based on when the prospect messaged.
+ * GOLDEN NUGGET #2: Phase-aware reply timing.
+ * Each conversation phase has different expected response times.
+ * Openers should be SLOW (don't seem desperate).
+ * Active back-and-forth should be faster.
+ */
+const PHASE_TIMING: Record<string, { minMinutes: number; maxMinutes: number }> = {
+  koud:      { minMinutes: 120, maxMinutes: 720 },   // 2-12h (first reply, don't seem desperate)
+  lauw:      { minMinutes: 30,  maxMinutes: 180 },    // 30m-3h
+  warm:      { minMinutes: 10,  maxMinutes: 45 },     // 10-45m (they're interested, be present)
+  proof:     { minMinutes: 15,  maxMinutes: 60 },     // 15-60m
+  call:      { minMinutes: 5,   maxMinutes: 20 },     // 5-20m (logistics, be quick)
+  weerstand: { minMinutes: 60,  maxMinutes: 240 },    // 1-4h (give them space)
+  default:   { minMinutes: 15,  maxMinutes: 90 },
+};
+
+/**
+ * Calculate a realistic reply delay based on:
+ * 1. Conversation phase (golden nugget #2)
+ * 2. When the prospect messaged (message age)
+ * 3. Prospect's own response pace (golden nugget #3: never faster than ~30% of their pace)
+ * 
  * Returns delay in milliseconds.
  */
-export function calculateReplyDelay(prospectMsgReceivedAt?: string): number {
-  if (!prospectMsgReceivedAt) {
-    // No timestamp — use a moderate delay
-    return jitter(10 * 60 * 1000, 0.4); // ~10 min ± 40%
+export function calculateReplyDelay(options: {
+  prospectMsgReceivedAt?: string;
+  phase?: ConversationPhase;
+  prospectAvgResponseTimeMs?: number;
+}): number {
+  const { prospectMsgReceivedAt, phase, prospectAvgResponseTimeMs } = options;
+
+  // 1. Get phase-based timing
+  const phaseTiming = PHASE_TIMING[phase || 'default'] || PHASE_TIMING.default;
+  let baseDelayMs = randomBetween(phaseTiming.minMinutes, phaseTiming.maxMinutes) * 60 * 1000;
+
+  // 2. Adjust based on message age (if message is already old, reduce delay)
+  if (prospectMsgReceivedAt) {
+    const ageMs = Date.now() - new Date(prospectMsgReceivedAt).getTime();
+    const ageMinutes = ageMs / 60000;
+
+    // If message is already older than our planned delay, use a shorter delay
+    if (ageMinutes > phaseTiming.maxMinutes) {
+      baseDelayMs = randomBetween(3, 15) * 60 * 1000; // 3-15 min from now
+    } else if (ageMinutes > phaseTiming.minMinutes) {
+      // Message already within our delay window — respond in remaining time
+      const remaining = (phaseTiming.maxMinutes - ageMinutes) * 60 * 1000;
+      baseDelayMs = Math.max(3 * 60 * 1000, remaining * Math.random());
+    }
   }
 
-  const ageMs = Date.now() - new Date(prospectMsgReceivedAt).getTime();
-  const ageMinutes = ageMs / 60000;
-
-  let baseDelayMs: number;
-
-  if (ageMinutes < 60) {
-    // Fresh message (< 1h) — reply in 3-15 minutes
-    baseDelayMs = randomBetween(3, 15) * 60 * 1000;
-  } else if (ageMinutes < 240) {
-    // 1-4 hours old — reply in 10-30 minutes
-    baseDelayMs = randomBetween(10, 30) * 60 * 1000;
-  } else if (ageMinutes < 1440) {
-    // 4-24 hours old — reply in 15-60 minutes
-    baseDelayMs = randomBetween(15, 60) * 60 * 1000;
-  } else {
-    // Older than 24h — reply in 30-120 minutes
-    baseDelayMs = randomBetween(30, 120) * 60 * 1000;
+  // 3. GOLDEN NUGGET #3: Never reply faster than ~30% of prospect's avg response time
+  if (prospectAvgResponseTimeMs && prospectAvgResponseTimeMs > 0) {
+    const minDelay = prospectAvgResponseTimeMs * 0.3;
+    baseDelayMs = Math.max(baseDelayMs, minDelay);
   }
 
+  // Apply jitter (±30%)
   return jitter(baseDelayMs, 0.3);
 }
 
@@ -41,26 +72,36 @@ export function calculateReplyDelay(prospectMsgReceivedAt?: string): number {
  */
 export function calculateTypingDelay(messageLength: number): number {
   // Average human types ~40 words per minute = ~200 chars per minute
-  // But for short LinkedIn DMs, people often copy-paste or type quickly
   const baseSeconds = Math.min(30, Math.max(5, messageLength / 15));
   return jitter(baseSeconds * 1000, 0.3);
 }
 
 /**
- * Calculate stagger delay between consecutive messages.
- * Minimum 2-5 minute gap between sends.
+ * GOLDEN NUGGET #5: "Read receipt simulation"
+ * A human reads the message before typing. Add a 30-90 second "read gap".
  */
-export function calculateStaggerDelay(): number {
-  return randomBetween(2, 5) * 60 * 1000 + jitter(30 * 1000, 0.5);
+export function calculateReadDelay(): number {
+  return randomBetween(30, 90) * 1000;
+}
+
+/**
+ * Calculate stagger delay between consecutive messages to DIFFERENT chats.
+ * GOLDEN NUGGET #1: Cross-chat stagger — never reply to multiple chats simultaneously.
+ * Minimum 5-15 minute gap between sends to different people.
+ */
+export function calculateCrossChatStagger(position: number): number {
+  // First message: minimal delay, each subsequent one adds 5-15 min
+  const baseMinutes = randomBetween(5, 15) * position;
+  return baseMinutes * 60 * 1000 + jitter(60 * 1000, 0.5);
 }
 
 /**
  * Check if current time is within working hours.
  * Mon-Fri, 8:30 - 18:30 CET.
+ * GOLDEN NUGGET #8: Start time randomized (not exactly 8:30)
  */
 export function isWithinWorkingHours(): boolean {
   const now = new Date();
-  // Convert to CET (UTC+1, or UTC+2 in summer)
   const cetOffset = isCETSummerTime(now) ? 2 : 1;
   const cetHour = (now.getUTCHours() + cetOffset) % 24;
   const cetMinutes = cetHour * 60 + now.getUTCMinutes();
@@ -75,7 +116,7 @@ export function isWithinWorkingHours(): boolean {
 
 /**
  * Get the next available working hours window.
- * Returns a Date for when sending can resume.
+ * GOLDEN NUGGET #8: Randomize start within 8:30-10:00 window.
  */
 export function getNextWorkingWindow(): Date {
   const now = new Date();
@@ -93,9 +134,46 @@ export function getNextWorkingWindow(): Date {
     next.setUTCDate(next.getUTCDate() + 1);
   }
 
-  // Set to 8:30 CET
-  next.setUTCHours(8 - cetOffset + Math.floor(Math.random() * 2), 30 + Math.floor(Math.random() * 30), 0, 0);
+  // Set to random start between 8:30-10:00 CET
+  const startHour = 8 + Math.floor(Math.random() * 2); // 8 or 9
+  const startMin = startHour === 8 ? 30 + Math.floor(Math.random() * 30) : Math.floor(Math.random() * 60);
+  next.setUTCHours(startHour - cetOffset, startMin, 0, 0);
   return next;
+}
+
+/**
+ * GOLDEN NUGGET #7: Determine if today should be a "cooling off" day.
+ * After a busy day (10+ messages sent yesterday), reduce today's capacity.
+ */
+export function getDailyCapacity(sentYesterday: number): number {
+  const baseCapacity = 15;
+  if (sentYesterday >= 12) {
+    // Busy yesterday — cool off today (50-70% capacity)
+    return Math.ceil(baseCapacity * randomBetween(0.3, 0.5));
+  }
+  if (sentYesterday >= 8) {
+    // Moderate yesterday — slightly reduced (70-90%)
+    return Math.ceil(baseCapacity * randomBetween(0.7, 0.9));
+  }
+  return baseCapacity;
+}
+
+/**
+ * GOLDEN NUGGET #8: Occasional off-hours message.
+ * 10% chance of allowing a late evening send (19:30-21:00), never on Sunday.
+ */
+export function allowOffHoursMessage(): boolean {
+  const now = new Date();
+  if (now.getUTCDay() === 0) return false; // Never Sunday
+  
+  const cetOffset = isCETSummerTime(now) ? 2 : 1;
+  const cetHour = (now.getUTCHours() + cetOffset) % 24;
+  
+  // Only in the 19:30-21:00 window
+  if (cetHour >= 19 && cetHour < 21) {
+    return Math.random() < 0.1; // 10% chance
+  }
+  return false;
 }
 
 // ---- Helpers ----
@@ -110,7 +188,6 @@ function jitter(value: number, factor: number): number {
 }
 
 function isCETSummerTime(date: Date): boolean {
-  // Rough CET/CEST check (last Sunday of March to last Sunday of October)
   const month = date.getUTCMonth();
   if (month > 2 && month < 9) return true;
   if (month < 2 || month > 9) return false;

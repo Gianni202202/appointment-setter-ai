@@ -1,15 +1,15 @@
 import { NextResponse } from 'next/server';
 import { getDrafts, getDraft, updateDraft, removeDraft, addDraft, getSentTodayCount } from '@/lib/database';
 import { sendMessage } from '@/lib/unipile';
-import { calculateReplyDelay, calculateTypingDelay, calculateStaggerDelay, isWithinWorkingHours, getNextWorkingWindow } from '@/lib/human-timing';
-
-const MAX_DAILY_SENDS = 15;
+import { calculateReplyDelay, calculateTypingDelay, calculateCrossChatStagger, calculateReadDelay, isWithinWorkingHours, getNextWorkingWindow, getDailyCapacity } from '@/lib/human-timing';
 
 // GET — list drafts (optional ?status=pending)
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status') || undefined;
   const drafts = getDrafts(status);
+  const sentToday = getSentTodayCount();
+  const dailyCap = getDailyCapacity(0); // TODO: track yesterday's sends
   return NextResponse.json({
     drafts,
     counts: {
@@ -18,8 +18,8 @@ export async function GET(request: Request) {
       sent: getDrafts('sent').length,
       rejected: getDrafts('rejected').length,
     },
-    sent_today: getSentTodayCount(),
-    max_daily: MAX_DAILY_SENDS,
+    sent_today: sentToday,
+    max_daily: dailyCap,
     within_working_hours: isWithinWorkingHours(),
   });
 }
@@ -42,7 +42,7 @@ export async function POST(request: Request) {
       updateDraft(draft_id, {
         status: 'approved',
         approved_at: new Date().toISOString(),
-        message: message || draft.message, // Allow editing on approve
+        message: message || draft.message,
       });
       return NextResponse.json({ success: true, draft: getDraft(draft_id) });
     }
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
   }
 }
 
-// PUT — batch approve and schedule sending
+// PUT — batch approve and schedule sending with human-like timing
 export async function PUT(request: Request) {
   try {
     const { draft_ids } = await request.json();
@@ -76,38 +76,48 @@ export async function PUT(request: Request) {
     }
 
     const sentToday = getSentTodayCount();
-    if (sentToday >= MAX_DAILY_SENDS) {
+    const dailyCap = getDailyCapacity(0);
+    if (sentToday >= dailyCap) {
       return NextResponse.json({
-        error: 'Daily send limit reached (' + MAX_DAILY_SENDS + '). Try again tomorrow.',
+        error: 'Daily send limit reached (' + dailyCap + '). Try again tomorrow.',
         sent_today: sentToday,
       }, { status: 429 });
     }
 
-    const remaining = MAX_DAILY_SENDS - sentToday;
+    const remaining = dailyCap - sentToday;
     const toProcess = draft_ids.slice(0, remaining);
 
     const results: { id: string; status: string; scheduled_at?: string; error?: string }[] = [];
-    let cumulativeDelay = 0;
 
-    for (const id of toProcess) {
+    for (let i = 0; i < toProcess.length; i++) {
+      const id = toProcess[i];
       const draft = getDraft(id);
       if (!draft || (draft.status !== 'approved' && draft.status !== 'pending')) {
         results.push({ id, status: 'skipped', error: 'Not found or not approvable' });
         continue;
       }
 
-      // Calculate human-like delay
-      const replyDelay = calculateReplyDelay(draft.prospect_msg_received_at);
-      const typingDelay = calculateTypingDelay(draft.message.length);
-      const staggerDelay = cumulativeDelay > 0 ? calculateStaggerDelay() : 0;
+      // Phase-aware reply delay per conversation
+      const replyDelay = calculateReplyDelay({
+        prospectMsgReceivedAt: draft.prospect_msg_received_at,
+        phase: draft.phase,
+      });
 
-      cumulativeDelay += staggerDelay;
-      const totalDelay = Math.max(replyDelay, cumulativeDelay) + typingDelay;
+      // Typing simulation
+      const typingDelay = calculateTypingDelay(draft.message.length);
+
+      // Read receipt simulation (30-90s)
+      const readDelay = calculateReadDelay();
+
+      // Cross-chat stagger: 5-15 min gap between sends to DIFFERENT people
+      const crossChatDelay = calculateCrossChatStagger(i);
+
+      const totalDelay = Math.max(replyDelay, crossChatDelay) + readDelay + typingDelay;
 
       let sendAt: Date;
       if (!isWithinWorkingHours()) {
         sendAt = getNextWorkingWindow();
-        sendAt = new Date(sendAt.getTime() + cumulativeDelay + typingDelay);
+        sendAt = new Date(sendAt.getTime() + crossChatDelay + readDelay + typingDelay);
       } else {
         sendAt = new Date(Date.now() + totalDelay);
       }
@@ -146,13 +156,13 @@ async function processScheduledSends() {
     setTimeout(async () => {
       try {
         if (!isWithinWorkingHours()) {
-          // Reschedule to next working window
           const nextWindow = getNextWorkingWindow();
           updateDraft(draft.id, { scheduled_send_at: nextWindow.toISOString() });
           return;
         }
 
-        if (getSentTodayCount() >= MAX_DAILY_SENDS) {
+        const dailyCap = getDailyCapacity(0);
+        if (getSentTodayCount() >= dailyCap) {
           updateDraft(draft.id, { status: 'pending', scheduled_send_at: undefined });
           return;
         }
