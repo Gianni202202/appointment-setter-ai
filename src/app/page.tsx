@@ -46,6 +46,11 @@ export default function Dashboard() {
   const [maxDaily, setMaxDaily] = useState(15);
   const [sendingBatch, setSendingBatch] = useState(false);
 
+  // Smart Copilot
+  const [copilotMode, setCopilotMode] = useState<'manual' | 'autoscan'>('manual');
+  const [autoScanning, setAutoScanning] = useState(false);
+  const [autoScanResults, setAutoScanResults] = useState<any[]>([]);
+
   // Sync
   const [syncing, setSyncing] = useState(false);
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null);
@@ -166,9 +171,12 @@ export default function Dashboard() {
   }, [mode, loadCopilotChats]);
 
   // Auto-refresh drafts every 15s when active
+  // But skip refresh if user just took an action (prevents UI flash)
   useEffect(() => {
     if (mode === 'off') return;
     const interval = setInterval(async () => {
+      // Skip if generating or user action was recent
+      if (generating || autoScanning) return;
       try {
         const res = await fetch('/api/agent/queue');
         if (res.ok) {
@@ -177,9 +185,9 @@ export default function Dashboard() {
           setSentToday(q.sent_today || 0);
         }
       } catch {}
-    }, 15000);
+    }, 20000); // Increased to 20s to reduce flashing
     return () => clearInterval(interval);
-  }, [mode]);
+  }, [mode, generating, autoScanning]);
 
   async function changeMode(newMode: AgentMode) {
     if (newMode === 'auto') {
@@ -223,6 +231,44 @@ export default function Dashboard() {
 
   function deselectAllChats() {
     setSelectedChatIds(new Set());
+  }
+
+  async function startCopilotAutoScan() {
+    setAutoScanning(true);
+    setAutoScanResults([]);
+    showToast('🚀 Copilot scant je inbox... dit duurt 30-60 seconden', 'info');
+
+    const scanPromise = fetch('/api/agent/copilot-autoscan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }).then(async (res) => {
+      if (res.ok) {
+        const data = await res.json();
+        setAutoScanResults(data.suggestions || []);
+        setAutoScanning(false);
+        try {
+          const qRes = await fetch('/api/agent/queue');
+          if (qRes.ok) {
+            const q = await qRes.json();
+            smartSetDrafts(q.drafts || []);
+            setSentToday(q.sent_today || 0);
+          }
+        } catch {}
+        showToast(
+          data.suggestions_found > 0
+            ? '🎯 Copilot vond ' + data.suggestions_found + ' interessante chat' + (data.suggestions_found > 1 ? 's' : '') + ' — check hieronder'
+            : '✓ ' + data.total_chats_scanned + ' chats gescand — geen actie nodig',
+          data.suggestions_found > 0 ? 'success' : 'info'
+        );
+      } else {
+        setAutoScanning(false);
+        showToast('✕ Auto-scan failed', 'error');
+      }
+    }).catch(() => {
+      setAutoScanning(false);
+      showToast('✕ Auto-scan error', 'error');
+    });
+    (window as any).__copilotScan = scanPromise;
   }
 
   async function generateDraftsForSelected() {
@@ -290,30 +336,43 @@ export default function Dashboard() {
   async function regenerateDraft(draftId: string, chatId: string) {
     setGenerating(true);
     setGeneratingProgress('🔄 Regenerating draft...');
+
+    // Remove old draft from UI immediately
+    setDrafts(prev => {
+      const updated = prev.filter(d => d.id !== draftId);
+      saveDraftsToLocal(updated);
+      return updated;
+    });
+
     try {
-      // First remove old draft
+      // Remove old draft on server
       await fetch('/api/agent/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ draft_id: draftId, action: 'reject' }),
       });
+
+      // Small delay to ensure server processed the removal
+      await new Promise(r => setTimeout(r, 500));
+
       // Generate new draft for this chat
       const res = await fetch('/api/agent/copilot-scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ chat_ids: [chatId] }),
       });
+
       if (res.ok) {
         const data = await res.json();
-        showToast(data.drafts_created > 0 ? '✓ Draft regenerated — check below' : '⚠️ Could not regenerate', data.drafts_created > 0 ? 'success' : 'error');
-        // Refresh drafts
+        // Always refresh from server to get the new draft
         const qRes = await fetch('/api/agent/queue');
         if (qRes.ok) {
           const q = await qRes.json();
           smartSetDrafts(q.drafts || []);
         }
+        showToast(data.drafts_created > 0 ? '✓ Draft opnieuw gegenereerd' : '⚠️ Kon geen nieuw draft maken — probeer nogmaals', data.drafts_created > 0 ? 'success' : 'error');
       } else {
-        showToast('✕ Regeneration failed', 'error');
+        showToast('✕ Regeneratie mislukt — probeer nogmaals', 'error');
       }
     } catch (err) { showToast('✕ Error: ' + err, 'error'); }
     finally { setGenerating(false); setGeneratingProgress(''); }
@@ -323,27 +382,30 @@ export default function Dashboard() {
     try {
       const draft = drafts.find(d => d.id === draftId);
 
+      // Update UI immediately (optimistic update)
+      if (action === 'approve') {
+        setDrafts(prev => {
+          const updated = prev.map(d => d.id === draftId ? { ...d, status: 'approved', approved_at: new Date().toISOString() } : d);
+          saveDraftsToLocal(updated);
+          return updated;
+        });
+      } else {
+        setDrafts(prev => {
+          const updated = prev.filter(d => d.id !== draftId);
+          saveDraftsToLocal(updated);
+          return updated;
+        });
+      }
+
+      // Then sync to server
       const res = await fetch('/api/agent/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ draft_id: draftId, action }),
       });
 
-      if (res.ok) {
-        // Update drafts locally without full reload (prevents UI jumps)
-        if (action === 'approve') {
-          setDrafts(prev => {
-            const updated = prev.map(d => d.id === draftId ? { ...d, status: 'approved', approved_at: new Date().toISOString() } : d);
-            saveDraftsToLocal(updated);
-            return updated;
-          });
-        } else {
-          setDrafts(prev => {
-            const updated = prev.filter(d => d.id !== draftId);
-            saveDraftsToLocal(updated);
-            return updated;
-          });
-        }
+      if (!res.ok) {
+        showToast('Server sync failed — but local update applied', 'error');
       }
 
       // Record outcome for self-learning (fire and forget)
@@ -529,8 +591,135 @@ export default function Dashboard() {
       {/* ==================== COPILOT MODE ==================== */}
       {mode === 'copilot' && (
         <>
-          {/* Step 1: Select Chats */}
+          {/* Step 1: Copilot Mode */}
           <div className="glass-card" style={{ padding: '20px', marginBottom: '16px' }}>
+            {/* Toggle: Smart Copilot vs Manual */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <button
+                onClick={() => setCopilotMode('autoscan')}
+                style={{
+                  flex: 1, padding: '14px 16px', borderRadius: '12px', border: 'none', cursor: 'pointer',
+                  background: copilotMode === 'autoscan' ? 'linear-gradient(135deg, #3b82f6, #1d4ed8)' : 'rgba(255,255,255,0.04)',
+                  color: copilotMode === 'autoscan' ? '#fff' : 'var(--text-muted)',
+                  fontSize: '13px', fontWeight: 600, transition: 'all 0.2s',
+                  boxShadow: copilotMode === 'autoscan' ? '0 4px 20px rgba(59,130,246,0.3)' : 'none',
+                }}
+              >
+                🚀 Smart Copilot
+                <div style={{ fontSize: '11px', fontWeight: 400, marginTop: '4px', opacity: 0.8 }}>
+                  Laat de AI zelf interessante chats vinden
+                </div>
+              </button>
+              <button
+                onClick={() => setCopilotMode('manual')}
+                style={{
+                  flex: 1, padding: '14px 16px', borderRadius: '12px', border: 'none', cursor: 'pointer',
+                  background: copilotMode === 'manual' ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.04)',
+                  color: copilotMode === 'manual' ? 'var(--accent)' : 'var(--text-muted)',
+                  fontSize: '13px', fontWeight: 600, transition: 'all 0.2s',
+                }}
+              >
+                ✋ Handmatig Selecteren
+                <div style={{ fontSize: '11px', fontWeight: 400, marginTop: '4px', opacity: 0.8 }}>
+                  Kies zelf welke chats een draft krijgen
+                </div>
+              </button>
+            </div>
+
+            {copilotMode === 'autoscan' ? (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <div>
+                    <h2 style={{ fontSize: '16px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{
+                        width: '24px', height: '24px', borderRadius: '50%', display: 'inline-flex',
+                        alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700,
+                        background: 'rgba(59,130,246,0.2)', color: 'var(--accent)',
+                      }}>1</span>
+                      🚀 Smart Scan
+                    </h2>
+                    <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', marginLeft: '32px' }}>
+                      De Copilot scant je inbox en vindt chats met potentie
+                    </p>
+                  </div>
+                  <button
+                    className="btn-primary"
+                    onClick={startCopilotAutoScan}
+                    disabled={autoScanning}
+                    style={{ fontSize: '13px', padding: '10px 24px' }}
+                  >
+                    {autoScanning ? '⏳ Scanning...' : '🚀 Start Copilot Scan'}
+                  </button>
+                </div>
+
+                {autoScanning && (
+                  <div style={{ padding: '32px', textAlign: 'center' }}>
+                    <div className="spinner" style={{ margin: '0 auto 12px' }} />
+                    <div style={{ fontSize: '13px', color: 'var(--accent)' }}>🤖 Copilot scant je inbox en analyseert gesprekken...</div>
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>Dit duurt 30-60 seconden. Je kunt wegnavigeren — het draait door op de achtergrond.</div>
+                  </div>
+                )}
+
+                {!autoScanning && autoScanResults.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>
+                      🎯 {autoScanResults.length} interessante gesprekken gevonden:
+                    </div>
+                    {autoScanResults.map((s: any) => (
+                      <div key={s.chat_id} style={{
+                        padding: '14px 16px', borderRadius: '12px',
+                        background: 'rgba(59,130,246,0.06)',
+                        border: '1px solid rgba(59,130,246,0.15)',
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                          <div>
+                            <div style={{ fontWeight: 700, fontSize: '14px' }}>{s.prospect_name}</div>
+                            {s.prospect_headline && (
+                              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{s.prospect_headline}</div>
+                            )}
+                          </div>
+                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                            {s.interest_reasons.map((r: string, i: number) => (
+                              <span key={i} style={{
+                                fontSize: '10px', padding: '2px 8px', borderRadius: '6px',
+                                background: 'rgba(59,130,246,0.15)', color: 'var(--accent)', whiteSpace: 'nowrap',
+                              }}>{r}</span>
+                            ))}
+                          </div>
+                        </div>
+                        {s.ai_reasoning && (
+                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px', fontStyle: 'italic' }}>
+                            💡 {s.ai_reasoning.substring(0, 200)}{s.ai_reasoning.length > 200 ? '...' : ''}
+                          </div>
+                        )}
+                        <div style={{
+                          padding: '10px 12px', borderRadius: '8px',
+                          background: 'rgba(255,255,255,0.03)', fontSize: '13px',
+                          borderLeft: '3px solid var(--accent)',
+                        }}>
+                          {s.draft_message}
+                        </div>
+                        {s.phase && (
+                          <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                            Fase: <strong>{s.phase}</strong> · Confidence: {s.confidence || 'medium'}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', padding: '8px 0', textAlign: 'center' }}>
+                      ↓ Drafts staan klaar in Step 2 hieronder — beoordeel en keur goed
+                    </div>
+                  </div>
+                )}
+
+                {!autoScanning && autoScanResults.length === 0 && (
+                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    Klik op <strong>Start Copilot Scan</strong> om je inbox te laten analyseren
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
               <div>
                 <h2 style={{ fontSize: '16px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -629,6 +818,8 @@ export default function Dashboard() {
                 >
                   {generating ? '⏳ Generating...' : `🤖 Generate ${selectedChatIds.size} Draft${selectedChatIds.size > 1 ? 's' : ''}`}
                 </button>
+              </div>
+            )}
               </div>
             )}
           </div>
