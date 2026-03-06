@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getAgentMode, getDrafts } from '@/lib/database';
-import { processScheduledSends } from '@/app/api/agent/queue/route';
+import { processScheduledSends } from '@/lib/queue-processor';
 import { isWithinWorkingHours } from '@/lib/human-timing';
 
 const DSN = process.env.UNIPILE_DSN || '';
