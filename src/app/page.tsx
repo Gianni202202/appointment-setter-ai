@@ -185,7 +185,7 @@ export default function Dashboard() {
   async function generateDraftsForSelected() {
     if (selectedChatIds.size === 0) { showToast('Select at least one chat', 'error'); return; }
     setGenerating(true);
-    setGeneratingProgress(`Generating drafts for ${selectedChatIds.size} chats...`);
+    setGeneratingProgress(`⏳ Generating drafts for ${selectedChatIds.size} chat${selectedChatIds.size > 1 ? 's' : ''}... This may take 30-60 seconds.`);
     try {
       const res = await fetch('/api/agent/copilot-scan', {
         method: 'POST',
@@ -194,7 +194,7 @@ export default function Dashboard() {
       });
       if (res.ok) {
         const data = await res.json();
-        showToast(`✓ Created ${data.drafts_created} drafts out of ${data.processed} chats`, 'success');
+        showToast(data.drafts_created > 0 ? `✓ Created ${data.drafts_created} drafts — scroll down to Step 2 to review` : `⚠️ Processed ${data.processed} chats but no drafts generated. Try different chats.`, data.drafts_created > 0 ? 'success' : 'error');
         setSelectedChatIds(new Set());
         // Refresh only the draft queue (not the full page)
         try {
@@ -460,7 +460,7 @@ export default function Dashboard() {
                 ✓ All caught up! No conversations need a response right now.
               </div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '300px', overflowY: 'auto' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '400px', overflowY: 'auto' }}>
                 {chatsNeedingAttention.map(chat => {
                   const isSelected = selectedChatIds.has(chat.chat_id);
                   return (

@@ -11,10 +11,11 @@ export default function Sidebar() {
   const [queueCount, setQueueCount] = useState(0);
 
   const refreshStatus = useCallback(() => {
-    fetch('/api/agent/mode')
-      .then(r => r.json())
-      .then(d => setAgentMode(d.mode || 'off'))
-      .catch(() => {});
+    // Read mode from localStorage (source of truth — survives Vercel cold starts)
+    const savedMode = typeof window !== 'undefined' ? localStorage.getItem('agent-mode') : null;
+    if (savedMode && ['off', 'copilot', 'auto'].includes(savedMode)) {
+      setAgentMode(savedMode);
+    }
     fetch('/api/agent/queue')
       .then(r => r.json())
       .then(d => setQueueCount(d.counts?.pending || 0))

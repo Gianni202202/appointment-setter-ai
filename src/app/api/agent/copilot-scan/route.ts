@@ -128,14 +128,14 @@ export async function POST(request: Request) {
           addPreviousOpener(chatId, aiResponse.message.split('\n')[0].substring(0, 60));
         }
 
-        // 6. Add to draft queue
-        if (aiResponse.message && aiResponse.should_respond) {
+        // 6. ALWAYS add to draft queue — user decides what to send, not the AI
+        if (aiResponse.message) {
           addDraft({
             chat_id: chatId,
             prospect_name: prospectName,
             prospect_headline: prospectHeadline,
             message: aiResponse.message,
-            reasoning: aiResponse.reasoning || '',
+            reasoning: aiResponse.reasoning || (aiResponse.should_respond === false ? '⚠️ AI suggested skipping this chat, but draft created for your review.' : ''),
             phase: aiResponse.phase,
             confidence: aiResponse.confidence,
           });
@@ -146,10 +146,11 @@ export async function POST(request: Request) {
             message: aiResponse.message.substring(0, 80) + '...',
           });
         } else {
+          // Claude returned no message at all — very rare edge case
           results.push({
             chat_id: chatId,
             prospect: prospectName,
-            status: aiResponse.needs_human ? 'needs_human_review' : 'no_response_needed',
+            status: 'no_message_generated',
           });
         }
       } catch (err) {
