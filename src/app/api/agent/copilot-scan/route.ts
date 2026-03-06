@@ -15,6 +15,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const chatIds: string[] = body.chat_ids || [];
+    const customInstruction: string | undefined = body.custom_instruction;
 
     if (chatIds.length === 0) {
       return NextResponse.json({ error: 'No chat_ids provided' }, { status: 400 });
@@ -117,7 +118,8 @@ export async function POST(request: Request) {
           state,
           messages,
           { name: prospectName, headline: prospectHeadline, company: prospectCompany },
-          legendaryContext
+          legendaryContext,
+          customInstruction
         );
 
         // 5. Store phase & memory

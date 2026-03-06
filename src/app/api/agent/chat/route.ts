@@ -26,6 +26,7 @@ YOUR CAPABILITIES — respond conversationally AND include action JSON:
 3. UPDATE_SETTINGS — Change scan filters (maxAgeDays, phases, limit, autoSend)
 4. SHOW_STATS — Show current dashboard stats
 5. EXPLAIN — Explain how something works
+6. GENERATE_DRAFTS — Generate drafts for chats, optionally with a custom instruction/angle. The user can say things like "focus on recruitment pain points" or "ask about their team growth" and ALL drafts will use this as inspiration while staying natural and adapted per prospect.
 
 RESPONSE FORMAT — Always respond in this exact JSON format:
 {
@@ -33,7 +34,8 @@ RESPONSE FORMAT — Always respond in this exact JSON format:
   "actions": [
     { "type": "SCAN_INBOX", "params": { "maxAgeDays": 7, "limit": 20 } },
     { "type": "CHANGE_MODE", "params": { "mode": "copilot" } },
-    { "type": "UPDATE_SETTINGS", "params": { "maxAgeDays": 14, "phases": ["warm", "proof", "call"] } }
+    { "type": "UPDATE_SETTINGS", "params": { "maxAgeDays": 14, "phases": ["warm", "proof", "call"] } },
+    { "type": "GENERATE_DRAFTS", "params": { "instruction": "focus on recruitment pain points", "maxAgeDays": 7 } }
   ]
 }
 
@@ -203,7 +205,76 @@ export async function POST(request: Request) {
           }
           break;
         }
-        case 'SHOW_STATS': {
+        case 'GENERATE_DRAFTS': {
+          try {
+            if (!DSN || !API_KEY || !ACCOUNT_ID) {
+              actionResults.push({ type: 'GENERATE_DRAFTS', result: 'LinkedIn not connected' });
+              break;
+            }
+            const maxAge = action.params?.maxAgeDays || scanSettings.maxAgeDays;
+            const instruction = action.params?.instruction || '';
+            const cutoffDate = new Date(Date.now() - maxAge * 24 * 60 * 60 * 1000);
+            
+            // Fetch chats needing attention
+            const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=50`, {
+              headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
+              cache: 'no-store',
+            });
+            
+            if (!chatsRes.ok) {
+              actionResults.push({ type: 'GENERATE_DRAFTS', result: 'Failed to fetch chats' });
+              break;
+            }
+            
+            const chatsData = await chatsRes.json();
+            const chats = chatsData.items || chatsData || [];
+            const existingDraftChatIds = new Set(
+              getDrafts().filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
+            );
+            
+            // Filter chats that need attention
+            const chatIdsToProcess: string[] = [];
+            for (const chat of chats) {
+              if (chat.account_id && chat.account_id !== ACCOUNT_ID) continue;
+              if (existingDraftChatIds.has(chat.id)) continue;
+              const lastMsg = chat.last_message;
+              const msgDate = lastMsg?.timestamp ? new Date(lastMsg.timestamp) : null;
+              if (msgDate && msgDate < cutoffDate) continue;
+              const isSentByMe = lastMsg ? (lastMsg.is_sender || lastMsg.sender?.is_me) : true;
+              if (!isSentByMe && lastMsg?.text) chatIdsToProcess.push(chat.id);
+            }
+            
+            if (chatIdsToProcess.length === 0) {
+              actionResults.push({ type: 'GENERATE_DRAFTS', result: 'No chats need attention right now' });
+              break;
+            }
+            
+            // Call copilot-scan POST internally to generate drafts
+            const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : (process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000');
+            const scanRes = await fetch(`${baseUrl}/api/agent/copilot-scan`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                chat_ids: chatIdsToProcess.slice(0, 10), 
+                custom_instruction: instruction 
+              }),
+            });
+            
+            if (scanRes.ok) {
+              const scanData = await scanRes.json();
+              actionResults.push({
+                type: 'GENERATE_DRAFTS',
+                result: `${scanData.drafts_created || 0} drafts generated for ${chatIdsToProcess.length} chats${instruction ? ' with instruction: "' + instruction.substring(0, 50) + '"' : ''}`,
+              });
+            } else {
+              actionResults.push({ type: 'GENERATE_DRAFTS', result: 'Draft generation failed' });
+            }
+          } catch (err) {
+            actionResults.push({ type: 'GENERATE_DRAFTS', result: 'Error: ' + String(err) });
+          }
+          break;
+        }
+                case 'SHOW_STATS': {
           actionResults.push({
             type: 'SHOW_STATS',
             result: `Mode: ${getAgentMode()}, Pending: ${pendingDrafts.length}, Approved: ${approvedDrafts.length}, Sent: ${sentToday}/${dailyCap}`,

@@ -475,7 +475,8 @@ export async function generateResponse(
   state: ConversationState,
   messages: Message[],
   prospectInfo?: { name: string; headline: string; company: string },
-  legendaryContext?: LegendaryContext
+  legendaryContext?: LegendaryContext,
+  customInstruction?: string
 ): Promise<ClaudeResponse> {
   let systemPrompt = buildSystemPrompt(config, state);
 
@@ -512,6 +513,15 @@ Vul alleen in wat je NIEUW leert uit het LAATSTE bericht van de prospect. Laat v
   const learningBlock = buildLearningPromptBlock();
   if (learningBlock) {
     systemPrompt += learningBlock;
+  }
+
+  // === CUSTOM INSTRUCTION from operator (via agent chat) ===
+  if (customInstruction) {
+    systemPrompt += `\n\n## OPERATOR INSTRUCTIE (PRIORITEIT)
+De operator (Gianni) heeft de volgende specifieke instructie gegeven voor dit bericht:
+"${customInstruction}"
+Gebruik dit als leidraad/inspiratie voor je antwoord, maar pas het aan per prospect en context.
+Houd je verder aan alle andere regels.`;
   }
 
   const conversationHistory = messages.map((m) => ({
