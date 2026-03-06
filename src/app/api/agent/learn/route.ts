@@ -10,7 +10,7 @@ export async function POST(request: Request) {
     const { action } = body;
 
     if (action === 'record_outcome') {
-      const entry = recordDraftOutcome({
+      const entry = await recordDraftOutcome({
         chat_id: body.chat_id,
         phase: body.phase || 'unknown',
         original_message: body.original_message,
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
     }
 
     if (action === 'record_reply') {
-      recordProspectReply(body.chat_id, body.was_positive);
+      await recordProspectReply(body.chat_id, body.was_positive);
       return NextResponse.json({ success: true });
     }
 
@@ -37,5 +37,5 @@ export async function POST(request: Request) {
  * GET — Get current learning insights
  */
 export async function GET() {
-  return NextResponse.json(getLearningStats());
+  return NextResponse.json(await getLearningStats());
 }

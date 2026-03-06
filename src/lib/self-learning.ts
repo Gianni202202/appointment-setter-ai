@@ -22,8 +22,7 @@
  * - Human-edited corrections (most valuable signal)
  */
 
-import * as fs from 'fs';
-import * as path from 'path';
+import Redis from 'ioredis';
 
 // Outcome types
 type DraftOutcome = 'approved' | 'rejected' | 'edited' | 'sent' | 'meeting_booked';
@@ -58,34 +57,60 @@ interface LearningInsights {
   last_updated: string;
 }
 
-// Persistence
-const PERSIST_DIR = '/tmp/appointment-setter-persist';
+// ============================================
+// Redis persistence — survives deploys and cold starts
+// ============================================
+const REDIS_URL = process.env.REDIS_URL || '';
+const REDIS_KEY = 'learning:data';
 
-function ensurePersistDir() {
-  try { fs.mkdirSync(PERSIST_DIR, { recursive: true }); } catch {}
+let redis: Redis | null = null;
+function getRedis(): Redis {
+  if (!redis && REDIS_URL) {
+    redis = new Redis(REDIS_URL, {
+      maxRetriesPerRequest: 3,
+      lazyConnect: true,
+      connectTimeout: 5000,
+    });
+    redis.on('error', (err) => console.warn('[Redis/Learning]', err.message));
+  }
+  if (!redis) throw new Error('REDIS_URL not configured for self-learning');
+  return redis;
 }
 
-function readLearningData(): LearningEntry[] {
-  ensurePersistDir();
-  const filePath = path.join(PERSIST_DIR, 'learning_data.json');
+// In-memory cache to avoid hitting Redis on every prompt generation
+let cachedData: LearningEntry[] | null = null;
+let cacheLoadedAt = 0;
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+async function readLearningData(): Promise<LearningEntry[]> {
+  // Return cache if fresh
+  if (cachedData && Date.now() - cacheLoadedAt < CACHE_TTL_MS) return cachedData;
   try {
-    const data = fs.readFileSync(filePath, 'utf8');
-    return JSON.parse(data);
+    const r = getRedis();
+    const val = await r.get(REDIS_KEY);
+    cachedData = val ? JSON.parse(val) : [];
+    cacheLoadedAt = Date.now();
+    return cachedData!;
   } catch {
-    return [];
+    return cachedData || [];
   }
 }
 
-function writeLearningData(data: LearningEntry[]) {
-  ensurePersistDir();
-  const filePath = path.join(PERSIST_DIR, 'learning_data.json');
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+async function writeLearningData(data: LearningEntry[]): Promise<void> {
+  cachedData = data;
+  cacheLoadedAt = Date.now();
+  try {
+    const r = getRedis();
+    await r.set(REDIS_KEY, JSON.stringify(data));
+  } catch (err) {
+    console.warn('[Learning] Redis write error:', err instanceof Error ? err.message : err);
+  }
 }
 
 /**
  * Record a draft outcome for learning
  */
-export function recordDraftOutcome(entry: {
+export async function recordDraftOutcome(entry: {
   chat_id: string;
   phase: string;
   original_message: string;
@@ -93,7 +118,7 @@ export function recordDraftOutcome(entry: {
   outcome: DraftOutcome;
   sentiment?: string;
 }) {
-  const data = readLearningData();
+  const data = await readLearningData();
   
   // Analyze opener style
   const opener = entry.original_message.split('\n')[0].toLowerCase();
@@ -130,15 +155,15 @@ export function recordDraftOutcome(entry: {
     data.splice(0, data.length - 500);
   }
   
-  writeLearningData(data);
+  await writeLearningData(data);
   return newEntry;
 }
 
 /**
  * Record that a prospect replied after our message
  */
-export function recordProspectReply(chat_id: string, wasPositive: boolean) {
-  const data = readLearningData();
+export async function recordProspectReply(chat_id: string, wasPositive: boolean) {
+  const data = await readLearningData();
   // Find the most recent entry for this chat
   for (let i = data.length - 1; i >= 0; i--) {
     if (data[i].chat_id === chat_id) {
@@ -147,14 +172,14 @@ export function recordProspectReply(chat_id: string, wasPositive: boolean) {
       break;
     }
   }
-  writeLearningData(data);
+  await writeLearningData(data);
 }
 
 /**
  * Generate insights from all learning data
  */
-export function generateInsights(): LearningInsights {
-  const data = readLearningData();
+export async function generateInsights(): Promise<LearningInsights> {
+  const data = await readLearningData();
   
   if (data.length === 0) {
     return {
@@ -258,8 +283,8 @@ export function generateInsights(): LearningInsights {
  * This is the KEY function — it creates a summary of what the AI has learned
  * that gets added to the system prompt for every new draft generation
  */
-export function buildLearningPromptBlock(): string {
-  const insights = generateInsights();
+export async function buildLearningPromptBlock(): Promise<string> {
+  const insights = await generateInsights();
   
   if (insights.total_drafts < 5) {
     return ''; // Not enough data yet
@@ -307,6 +332,6 @@ export function buildLearningPromptBlock(): string {
 /**
  * Get raw insights for dashboard display
  */
-export function getLearningStats() {
-  return generateInsights();
+export async function getLearningStats() {
+  return await generateInsights();
 }

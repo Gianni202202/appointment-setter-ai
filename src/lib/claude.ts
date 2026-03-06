@@ -547,7 +547,7 @@ Voeg een extra veld toe aan je JSON response:
 Vul alleen in wat je NIEUW leert uit het LAATSTE bericht van de prospect. Laat velden null als er niets nieuws is.`;
 
   // === SELF-LEARNING: Inject performance data from previous drafts ===
-  const learningBlock = buildLearningPromptBlock();
+  const learningBlock = await buildLearningPromptBlock();
   if (learningBlock) {
     systemPrompt += learningBlock;
   }
