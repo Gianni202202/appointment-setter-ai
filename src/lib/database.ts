@@ -1,4 +1,4 @@
-import {Conversation, Message, AgentConfig, ConversationState, DashboardMetrics, AgentMode, DraftMessage} from '@/types';
+import {Conversation, Message, AgentConfig, ConversationState, DashboardMetrics, AgentMode, DraftMessage, Prospect, ProspectStatus} from '@/types';
 import Redis from 'ioredis';
 
 // ============================================
@@ -563,4 +563,133 @@ export async function getRejectedChats(): Promise<string[]> {
 export async function isRejectedChat(chatId: string): Promise<boolean> {
   const rejected = await rGet<string[]>('rejected:chats', []);
   return rejected.includes(chatId);
+}
+
+
+// ============================================
+// PROSPECTS — Redis persisted ⭐
+// ============================================
+export async function getProspects(status?: ProspectStatus): Promise<Prospect[]> {
+  const all = await rGet<Prospect[]>('prospect:list', []);
+  if (status) return all.filter(p => p.status === status);
+  return all;
+}
+
+export async function getProspect(id: string): Promise<Prospect | undefined> {
+  const all = await rGet<Prospect[]>('prospect:list', []);
+  return all.find(p => p.id === id);
+}
+
+export async function getProspectByProviderId(providerId: string): Promise<Prospect | undefined> {
+  const all = await rGet<Prospect[]>('prospect:list', []);
+  return all.find(p => p.provider_id === providerId);
+}
+
+export async function addProspect(prospect: Omit<Prospect, 'id' | 'status' | 'enriched' | 'imported_at' | 'updated_at'>): Promise<Prospect> {
+  const all = await rGet<Prospect[]>('prospect:list', []);
+  
+  // Dedup by provider_id
+  const existing = all.find(p => p.provider_id === prospect.provider_id);
+  if (existing) return existing;
+  
+  const newProspect: Prospect = {
+    ...prospect,
+    id: 'prsp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+    status: 'imported',
+    enriched: false,
+    imported_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  all.push(newProspect);
+  await rSet('prospect:list', all);
+  return newProspect;
+}
+
+export async function addProspectsBulk(prospects: Omit<Prospect, 'id' | 'status' | 'enriched' | 'imported_at' | 'updated_at'>[]): Promise<{ added: number; skipped: number }> {
+  const all = await rGet<Prospect[]>('prospect:list', []);
+  const existingIds = new Set(all.map(p => p.provider_id));
+  let added = 0;
+  let skipped = 0;
+  
+  for (const prospect of prospects) {
+    if (existingIds.has(prospect.provider_id)) {
+      skipped++;
+      continue;
+    }
+    all.push({
+      ...prospect,
+      id: 'prsp_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+      status: 'imported',
+      enriched: false,
+      imported_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    existingIds.add(prospect.provider_id);
+    added++;
+  }
+  
+  await rSet('prospect:list', all);
+  return { added, skipped };
+}
+
+export async function updateProspect(id: string, updates: Partial<Prospect>): Promise<Prospect | null> {
+  const all = await rGet<Prospect[]>('prospect:list', []);
+  const idx = all.findIndex(p => p.id === id);
+  if (idx === -1) return null;
+  all[idx] = { ...all[idx], ...updates, updated_at: new Date().toISOString() };
+  await rSet('prospect:list', all);
+  return all[idx];
+}
+
+export async function updateProspectByProviderId(providerId: string, updates: Partial<Prospect>): Promise<Prospect | null> {
+  const all = await rGet<Prospect[]>('prospect:list', []);
+  const idx = all.findIndex(p => p.provider_id === providerId);
+  if (idx === -1) return null;
+  all[idx] = { ...all[idx], ...updates, updated_at: new Date().toISOString() };
+  await rSet('prospect:list', all);
+  return all[idx];
+}
+
+export async function removeProspect(id: string): Promise<boolean> {
+  const all = await rGet<Prospect[]>('prospect:list', []);
+  const filtered = all.filter(p => p.id !== id);
+  if (filtered.length === all.length) return false;
+  await rSet('prospect:list', filtered);
+  return true;
+}
+
+export async function getProspectStats(): Promise<Record<ProspectStatus, number>> {
+  const all = await rGet<Prospect[]>('prospect:list', []);
+  const stats: Record<ProspectStatus, number> = {
+    imported: 0, enriched: 0, invite_sent: 0, connected: 0, draft_created: 0, messaged: 0, rejected: 0,
+  };
+  all.forEach(p => { stats[p.status]++; });
+  return stats;
+}
+
+// ============================================
+// INVITE TRACKING — Redis persisted
+// ============================================
+export async function getInvitesSentToday(): Promise<number> {
+  const today = new Date().toISOString().split('T')[0];
+  const all = await rGet<Prospect[]>('prospect:list', []);
+  return all.filter(p => p.invite_sent_at?.startsWith(today)).length;
+}
+
+export async function getSearchesToday(): Promise<number> {
+  const today = new Date().toISOString().split('T')[0];
+  const count = await rGet<{ date: string; count: number }>('prospect:search_count', { date: '', count: 0 });
+  return count.date === today ? count.count : 0;
+}
+
+export async function incrementSearchCount(profilesFetched: number): Promise<void> {
+  const today = new Date().toISOString().split('T')[0];
+  const current = await rGet<{ date: string; count: number }>('prospect:search_count', { date: '', count: 0 });
+  if (current.date === today) {
+    current.count += profilesFetched;
+  } else {
+    current.date = today;
+    current.count = profilesFetched;
+  }
+  await rSet('prospect:search_count', current);
 }

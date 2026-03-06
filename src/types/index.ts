@@ -175,3 +175,43 @@ export interface DraftMessage {
   scheduled_send_at?: string;
   sent_at?: string;
 }
+
+// ============================================
+// Prospect Types
+// ============================================
+
+export type ProspectStatus = 'imported' | 'enriched' | 'invite_sent' | 'connected' | 'draft_created' | 'messaged' | 'rejected';
+
+export interface Prospect {
+  id: string;
+  provider_id: string;
+  public_identifier: string;
+  name: string;
+  first_name: string;
+  last_name: string;
+  headline: string;
+  company: string;
+  location: string;
+  profile_url: string;
+  profile_picture_url: string;
+  network_distance: string;
+
+  // Enrichment data
+  enriched: boolean;
+  experience?: { company: string; role: string; duration: string }[];
+  skills?: string[];
+  summary?: string;
+
+  // Pipeline state
+  status: ProspectStatus;
+  invite_sent_at?: string;
+  invite_message?: string;
+  connected_at?: string;
+  chat_id?: string;
+
+  // Meta
+  source: 'sales_navigator' | 'search' | 'manual';
+  search_query?: string;
+  imported_at: string;
+  updated_at: string;
+}

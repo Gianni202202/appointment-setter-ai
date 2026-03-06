@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Elvatix Importer</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      width: 380px;
+      min-height: 280px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(145deg, #0a0a14 0%, #111128 50%, #0d1a2e 100%);
+      color: #e4e4f0;
+      padding: 20px;
+    }
+    .header {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 16px; padding-bottom: 12px;
+      border-bottom: 1px solid rgba(99, 102, 241, 0.2);
+    }
+    .header svg { width: 28px; height: 28px; }
+    .header h1 {
+      font-size: 16px; font-weight: 700;
+      background: linear-gradient(135deg, #818cf8, #6366f1);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    }
+    .header span { font-size: 11px; color: #6b7280; margin-left: auto; }
+
+    .status-card {
+      background: rgba(99, 102, 241, 0.08);
+      border: 1px solid rgba(99, 102, 241, 0.15);
+      border-radius: 12px; padding: 14px; margin-bottom: 14px;
+    }
+    .status-card .label { font-size: 11px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; }
+    .status-card .value { font-size: 14px; color: #c7d2fe; margin-top: 4px; word-break: break-all; }
+    .status-card .url-text { font-size: 11px; color: #6366f1; margin-top: 6px; font-family: 'Courier New', monospace; max-height: 40px; overflow: hidden; }
+
+    .settings { margin-bottom: 14px; }
+    .settings label { font-size: 12px; color: #9ca3af; display: block; margin-bottom: 4px; }
+    .settings input, .settings select {
+      width: 100%; padding: 8px 10px; font-size: 13px;
+      background: rgba(255,255,255,0.05); border: 1px solid rgba(99,102,241,0.2);
+      border-radius: 8px; color: #e4e4f0; outline: none;
+    }
+    .settings input:focus { border-color: #6366f1; }
+
+    .btn-import {
+      width: 100%; padding: 12px; font-size: 14px; font-weight: 600;
+      background: linear-gradient(135deg, #6366f1, #4f46e5);
+      color: white; border: none; border-radius: 10px; cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-import:hover { background: linear-gradient(135deg, #818cf8, #6366f1); transform: translateY(-1px); }
+    .btn-import:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .progress {
+      margin-top: 12px; display: none;
+    }
+    .progress.active { display: block; }
+    .progress-bar {
+      height: 6px; background: rgba(99,102,241,0.15); border-radius: 3px; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; background: linear-gradient(90deg, #6366f1, #818cf8);
+      width: 0%; transition: width 0.3s ease; border-radius: 3px;
+    }
+    .progress-text { font-size: 11px; color: #9ca3af; margin-top: 6px; text-align: center; }
+
+    .result {
+      margin-top: 12px; padding: 10px; border-radius: 8px; font-size: 12px; display: none;
+    }
+    .result.success { display: block; background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.2); color: #86efac; }
+    .result.error { display: block; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); color: #fca5a5; }
+
+    .not-on-sales-nav {
+      text-align: center; padding: 30px 20px; color: #6b7280;
+    }
+    .not-on-sales-nav svg { width: 48px; height: 48px; margin-bottom: 12px; opacity: 0.5; }
+    .not-on-sales-nav p { font-size: 13px; line-height: 1.5; }
+
+    .config-section {
+      margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(99,102,241,0.1);
+    }
+    .config-section .row { display: flex; gap: 8px; margin-bottom: 8px; }
+    .config-section .row > div { flex: 1; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <svg viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="14" fill="url(#g)"/><path d="M8 14l4 4 8-8" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><defs><linearGradient id="g" x1="0" y1="0" x2="28" y2="28"><stop stop-color="#6366f1"/><stop offset="1" stop-color="#4f46e5"/></linearGradient></defs></svg>
+    <h1>Elvatix Importer</h1>
+    <span>v1.0</span>
+  </div>
+
+  <div id="main-content">
+    <!-- Shown when on Sales Navigator -->
+    <div id="on-sales-nav" style="display:none;">
+      <div class="status-card">
+        <div class="label">Detected Sales Navigator Search</div>
+        <div class="value" id="search-info">Loading...</div>
+        <div class="url-text" id="search-url"></div>
+      </div>
+
+      <div class="settings config-section">
+        <div class="row">
+          <div>
+            <label>Max Results</label>
+            <select id="max-results">
+              <option value="25">25 prospects</option>
+              <option value="50">50 prospects</option>
+              <option value="100" selected>100 prospects</option>
+              <option value="250">250 prospects</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <button class="btn-import" id="btn-import">
+        🎯 Import Prospects
+      </button>
+
+      <div class="progress" id="progress">
+        <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+        <div class="progress-text" id="progress-text">Importing...</div>
+      </div>
+
+      <div class="result" id="result"></div>
+    </div>
+
+    <!-- Shown when NOT on Sales Navigator -->
+    <div id="not-on-sales-nav">
+      <div class="not-on-sales-nav">
+        <svg viewBox="0 0 48 48" fill="none"><circle cx="24" cy="24" r="22" stroke="#6366f1" stroke-width="2" opacity="0.3"/><path d="M20 16l12 8-12 8V16z" fill="#6366f1" opacity="0.4"/></svg>
+        <p>Open <strong>LinkedIn Sales Navigator</strong> and run a search to import prospects into your Elvatix dashboard.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
