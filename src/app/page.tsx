@@ -364,26 +364,18 @@ export default function Dashboard() {
   }
 
   async function regenerateDraft(draftId: string, chatId: string) {
-    setGenerating(true);
-    setGeneratingProgress('🔄 Regenerating draft...');
-
-    // Remove old draft from UI immediately
-    setDrafts(prev => {
-      const updated = prev.filter(d => d.id !== draftId);
-      saveDraftsToLocal(updated);
-      return updated;
-    });
+    setRegeneratingDraftId(draftId);
 
     try {
-      // Remove old draft on server
+      // Remove old draft on server (but keep it in UI with loading state)
       await fetch('/api/agent/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ draft_id: draftId, action: 'reject' }),
       });
 
-      // Small delay to ensure server processed the removal
-      await new Promise(r => setTimeout(r, 500));
+      // Small delay
+      await new Promise(r => setTimeout(r, 300));
 
       // Generate new draft for this chat
       const res = await fetch('/api/agent/copilot-scan', {
@@ -394,7 +386,7 @@ export default function Dashboard() {
 
       if (res.ok) {
         const data = await res.json();
-        // Always refresh from server to get the new draft
+        // Refresh from server to get the new draft (replaces old one)
         const qRes = await fetch('/api/agent/queue');
         if (qRes.ok) {
           const q = await qRes.json();
@@ -405,11 +397,12 @@ export default function Dashboard() {
         showToast('✕ Regeneratie mislukt — probeer nogmaals', 'error');
       }
     } catch (err) { showToast('✕ Error: ' + err, 'error'); }
-    finally { setGenerating(false); setGeneratingProgress(''); }
+    finally { setRegeneratingDraftId(null); }
   }
 
   // Guard to prevent double-click / double-fire on draft actions
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+  const [regeneratingDraftId, setRegeneratingDraftId] = useState<string | null>(null);
 
   async function handleDraftAction(draftId: string, action: 'approve' | 'reject') {
     if (actionInProgress) return; // Prevent double-fire
@@ -1030,7 +1023,7 @@ export default function Dashboard() {
                           <button
                             className="btn-secondary"
                             onClick={() => regenerateDraft(draft.id, draft.chat_id)}
-                            disabled={generating}
+                            disabled={generating || regeneratingDraftId !== null}
                             style={{ padding: '8px 16px', fontSize: '12px', color: 'var(--accent)' }}
                             title="Generate a new draft for this conversation"
                           >
