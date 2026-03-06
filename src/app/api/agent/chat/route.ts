@@ -8,7 +8,7 @@ import {
   logActivity,
 } from '@/lib/database';
 import { getDailyCapacity } from '@/lib/human-timing';
-import { generateDraftForChat } from '@/app/api/agent/copilot-autoscan/route';
+import { generateDraftForChat } from '@/lib/draft-generator';
 
 // Pro plan: allow up to 60s execution
 export const maxDuration = 60;
@@ -257,7 +257,17 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
             const merged: any = { ...currentConfig };
 
             if (params.best_practices !== undefined) merged.best_practices = params.best_practices;
-            if (params.strategies !== undefined) merged.strategies = params.strategies;
+            if (params.strategies !== undefined) {
+              // Validate and normalize strategy format
+              merged.strategies = (Array.isArray(params.strategies) ? params.strategies : []).map((s: any) => ({
+                id: s.id || 'strat_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
+                name: s.name || 'Unnamed Strategy',
+                scenario: s.scenario || 'general',
+                template: s.template || '',
+                instruction: s.instruction || '',
+                active: s.active !== false,
+              }));
+            }
             if (params.blacklist !== undefined) merged.blacklist = params.blacklist;
             if (params.tone) merged.tone = { ...currentConfig.tone, ...params.tone };
             if (params.rules) merged.rules = { ...currentConfig.rules, ...params.rules };
@@ -374,12 +384,14 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
             let chatIdsToProcess: string[] = action.params?.chat_ids || [];
 
             // If force_regenerate with no specific chat_ids → regenerate ALL pending drafts
+            // SAFE: collect chat_ids first, generate new drafts, THEN remove old ones
+            const oldDraftsToRemove: string[] = [];
             if (forceRegenerate && chatIdsToProcess.length === 0 && pendingDrafts.length > 0) {
-              for (const draft of pendingDrafts) {
-                await removeDraft(draft.id);
-              }
               chatIdsToProcess = pendingDrafts.map(d => d.chat_id);
-              actionResults.push({ type: 'GENERATE_DRAFTS', result: `Removed ${pendingDrafts.length} old drafts, regenerating with new instruction...` });
+              for (const draft of pendingDrafts) {
+                oldDraftsToRemove.push(draft.id);
+              }
+              actionResults.push({ type: 'GENERATE_DRAFTS', result: `Regenerating ${pendingDrafts.length} drafts with new instruction...` });
             }
 
             // If no specific chat_ids and not force_regenerate, find chats needing attention
@@ -429,6 +441,16 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
                 draftsFailed++;
                 draftErrors.push(chatId.substring(0, 8) + ': ' + (err?.message || String(err)).substring(0, 50));
               }
+            }
+
+            // Only remove old drafts AFTER new ones were created successfully
+            if (oldDraftsToRemove.length > 0 && draftsCreated > 0) {
+              for (const oldId of oldDraftsToRemove) {
+                await removeDraft(oldId);
+              }
+              actionResults.push({ type: 'GENERATE_DRAFTS', result: `Removed ${oldDraftsToRemove.length} old drafts` });
+            } else if (oldDraftsToRemove.length > 0 && draftsCreated === 0) {
+              actionResults.push({ type: 'GENERATE_DRAFTS', result: 'Kept old drafts because no new ones were created (safety)' });
             }
 
             const errorDetail = draftErrors.length > 0 ? ' Errors: ' + draftErrors.join('; ') : '';

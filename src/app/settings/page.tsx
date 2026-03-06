@@ -1,10 +1,10 @@
-import { getConfig } from '@/lib/database';
+import { getConfigAsync } from '@/lib/database';
 import SettingsForm from '@/components/SettingsForm';
 
 export const dynamic = 'force-dynamic';
 
-export default function SettingsPage() {
-  const config = getConfig();
+export default async function SettingsPage() {
+  const config = await getConfigAsync();
 
   return (
     <div>

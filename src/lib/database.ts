@@ -187,9 +187,9 @@ export async function getConfigAsync(): Promise<AgentConfig> {
   return agentConfig;
 }
 
-export function updateConfig(config: Partial<AgentConfig>): AgentConfig {
+export async function updateConfig(config: Partial<AgentConfig>): Promise<AgentConfig> {
   agentConfig = { ...agentConfig, ...config };
-  rSet('agent:config', agentConfig);
+  await rSet('agent:config', agentConfig);
   return agentConfig;
 }
 

@@ -8,7 +8,7 @@ export async function GET() {
 export async function PUT(request: Request) {
   try {
     const body = await request.json();
-    const updated = updateConfig(body);
+    const updated = await updateConfig(body);
     return NextResponse.json(updated);
   } catch (error) {
     console.error('[Config] Error:', error);
