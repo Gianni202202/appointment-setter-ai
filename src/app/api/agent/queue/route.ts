@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getDrafts, getDraft, updateDraft, removeDraft, addDraft, getSentTodayCount } from '@/lib/database';
+import { getDrafts, getDraft, updateDraft, removeDraft, addDraft, getSentTodayCount, logActivity } from '@/lib/database';
 import { sendMessage } from '@/lib/unipile';
 import { calculateReplyDelay, calculateTypingDelay, calculateCrossChatStagger, calculateReadDelay, isWithinWorkingHours, getNextWorkingWindow, getDailyCapacity } from '@/lib/human-timing';
 
@@ -44,11 +44,13 @@ export async function POST(request: Request) {
         approved_at: new Date().toISOString(),
         message: message || draft.message,
       });
+      logActivity('draft_approved', draft.prospect_name || 'Unknown', { draft_id, chat_id: draft.chat_id });
       return NextResponse.json({ success: true, draft: getDraft(draft_id) });
     }
 
     if (action === 'reject') {
       updateDraft(draft_id, { status: 'rejected' });
+      logActivity('draft_rejected', draft.prospect_name || 'Unknown', { draft_id, chat_id: draft.chat_id });
       return NextResponse.json({ success: true });
     }
 

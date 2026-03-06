@@ -276,6 +276,38 @@ export default function Dashboard() {
     setLoadingConversation(null);
   }
 
+  async function regenerateDraft(draftId: string, chatId: string) {
+    setGenerating(true);
+    setGeneratingProgress('🔄 Regenerating draft...');
+    try {
+      // First remove old draft
+      await fetch('/api/agent/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draft_id: draftId, action: 'reject' }),
+      });
+      // Generate new draft for this chat
+      const res = await fetch('/api/agent/copilot-scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_ids: [chatId] }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        showToast(data.drafts_created > 0 ? '✓ Draft regenerated — check below' : '⚠️ Could not regenerate', data.drafts_created > 0 ? 'success' : 'error');
+        // Refresh drafts
+        const qRes = await fetch('/api/agent/queue');
+        if (qRes.ok) {
+          const q = await qRes.json();
+          smartSetDrafts(q.drafts || []);
+        }
+      } else {
+        showToast('✕ Regeneration failed', 'error');
+      }
+    } catch (err) { showToast('✕ Error: ' + err, 'error'); }
+    finally { setGenerating(false); setGeneratingProgress(''); }
+  }
+
   async function handleDraftAction(draftId: string, action: 'approve' | 'reject') {
     try {
       const draft = drafts.find(d => d.id === draftId);
@@ -702,6 +734,15 @@ export default function Dashboard() {
                             title="Approve this draft — it will NOT be sent yet. You send in Step 3."
                           >
                             ✓ Approve Draft
+                          </button>
+                          <button
+                            className="btn-secondary"
+                            onClick={() => regenerateDraft(draft.id, draft.chat_id)}
+                            disabled={generating}
+                            style={{ padding: '8px 16px', fontSize: '12px', color: 'var(--accent)' }}
+                            title="Generate a new draft for this conversation"
+                          >
+                            🔄 Regenerate
                           </button>
                           <button
                             className="btn-secondary"

@@ -433,3 +433,86 @@ export function getAgentScanSettings() {
 export function updateAgentScanSettings(updates: Partial<typeof agentScanSettings>) {
   agentScanSettings = { ...agentScanSettings, ...updates };
 }
+
+
+// ============================================
+// ACTIVITY LOG — CRM tracking
+// ============================================
+interface ActivityEntry {
+  id: string;
+  type: 'draft_created' | 'draft_approved' | 'draft_rejected' | 'message_sent' | 'reply_received' | 'label_changed' | 'mode_changed';
+  prospect: string;
+  details: any;
+  timestamp: string;
+}
+
+function readActivityLog(): ActivityEntry[] {
+  return readPersisted<ActivityEntry[]>('activity_log', []);
+}
+
+function writeActivityLog(log: ActivityEntry[]) {
+  writePersisted('activity_log', log);
+}
+
+export function logActivity(type: ActivityEntry['type'], prospect: string, details: any = {}) {
+  const log = readActivityLog();
+  log.unshift({
+    id: 'act_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+    type,
+    prospect,
+    details,
+    timestamp: new Date().toISOString(),
+  });
+  // Keep last 500 entries
+  writeActivityLog(log.slice(0, 500));
+}
+
+export function getActivityLog(limit = 50, offset = 0): ActivityEntry[] {
+  const log = readActivityLog();
+  return log.slice(offset, offset + limit);
+}
+
+export function getActivityCount(): number {
+  return readActivityLog().length;
+}
+
+// ============================================
+// PROSPECT LABELS — user-defined tags per chat
+// ============================================
+interface ProspectLabel {
+  chat_id: string;
+  prospect_name: string;
+  label: string; // actief | wacht | afgewezen | call_gepland | klant | custom
+  color: string;
+  updated_at: string;
+}
+
+function readLabels(): ProspectLabel[] {
+  return readPersisted<ProspectLabel[]>('prospect_labels', []);
+}
+
+function writeLabels(labels: ProspectLabel[]) {
+  writePersisted('prospect_labels', labels);
+}
+
+export function setProspectLabel(chatId: string, prospectName: string, label: string, color: string = '') {
+  const labels = readLabels();
+  const existing = labels.find(l => l.chat_id === chatId);
+  if (existing) {
+    existing.label = label;
+    existing.color = color || existing.color;
+    existing.updated_at = new Date().toISOString();
+  } else {
+    labels.push({ chat_id: chatId, prospect_name: prospectName, label, color, updated_at: new Date().toISOString() });
+  }
+  writeLabels(labels);
+  logActivity('label_changed', prospectName, { chat_id: chatId, label });
+}
+
+export function getProspectLabel(chatId: string): ProspectLabel | undefined {
+  return readLabels().find(l => l.chat_id === chatId);
+}
+
+export function getAllLabels(): ProspectLabel[] {
+  return readLabels();
+}
