@@ -49,10 +49,10 @@ export default function Dashboard() {
   // Smart Copilot
   const [copilotMode, setCopilotMode] = useState<'manual' | 'autoscan'>('manual');
   const [autoScanning, setAutoScanning] = useState(false);
-  const [autoScanResults, setAutoScanResults] = useState<any[]>([]);
+  const [scanResults, setScanResults] = useState<any[]>([]);
   const [scanLimit, setScanLimit] = useState(50);
   const [scanProgress, setScanProgress] = useState('');
-  const [scanStats, setScanStats] = useState<{ scanned: number; found: number } | null>(null);
+  const [generatingForChat, setGeneratingForChat] = useState<string | null>(null);
 
   // Sync
   const [syncing, setSyncing] = useState(false);
@@ -238,81 +238,82 @@ export default function Dashboard() {
 
   async function startCopilotAutoScan() {
     setAutoScanning(true);
-    setAutoScanResults([]);
-    setScanProgress('🔍 Scanning starten...');
-    setScanStats(null);
+    setScanResults([]);
+    setScanProgress('🔍 Chats ophalen uit LinkedIn...');
 
-    let allSuggestions: any[] = [];
-    let totalScanned = 0;
-    let totalFetched = 0;
-    let cursor: string | null = null;
-    const batchSize = 25; // Fetch 25 chats per API call
-    const maxBatches = Math.ceil(scanLimit / batchSize);
+    try {
+      // Phase 1: Fast scan — just fetch and score all chats
+      const scanRes: Response = await fetch('/api/agent/copilot-autoscan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'scan', target_count: scanLimit }),
+      });
 
-    const scanPromise = (async () => {
-      try {
-        for (let batch = 0; batch < maxBatches; batch++) {
-          const remaining = scanLimit - totalFetched;
-          if (remaining <= 0) break;
-
-          setScanProgress('🔍 Chat ' + (totalFetched + 1) + '-' + Math.min(totalFetched + batchSize, scanLimit) + ' van ' + scanLimit + ' ophalen...');
-
-          const res: Response = await fetch('/api/agent/copilot-autoscan', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              target_count: Math.min(batchSize, remaining),
-              max_suggestions: 10 - allSuggestions.length,
-              cursor: cursor,
-            }),
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            totalScanned += data.total_chats_scanned || 0;
-            totalFetched += data.total_chats_fetched || 0;
-            cursor = data.next_cursor || null;
-
-            if (data.suggestions && data.suggestions.length > 0) {
-              allSuggestions = [...allSuggestions, ...data.suggestions];
-              setAutoScanResults([...allSuggestions]);
-            }
-            setScanStats({ scanned: totalScanned, found: allSuggestions.length });
-
-            // Stop if no more pages or enough suggestions
-            if (!cursor || allSuggestions.length >= 10) break;
-          } else {
-            break;
-          }
-        }
-
-        setScanProgress('');
+      if (!scanRes.ok) {
+        showToast('Scan mislukt', 'error');
         setAutoScanning(false);
+        setScanProgress('');
+        return;
+      }
 
-        // Refresh drafts
+      const data = await scanRes.json();
+      const results = data.results || [];
+      setScanResults(results);
+      setScanProgress('');
+      setAutoScanning(false);
+
+      const interesting = results.filter((r: any) => r.status === 'interesting');
+      showToast(
+        results.length + ' chats gescand — ' + interesting.length + ' interessant',
+        interesting.length > 0 ? 'success' : 'info'
+      );
+
+      // Phase 2: Auto-generate drafts for interesting chats (sequentially, in background)
+      if (interesting.length > 0) {
+        for (const chat of interesting) {
+          setGeneratingForChat(chat.chat_id);
+          try {
+            const genRes: Response = await fetch('/api/agent/copilot-autoscan', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'generate_draft', chat_id: chat.chat_id }),
+            });
+            if (genRes.ok) {
+              const genData = await genRes.json();
+              if (genData.success) {
+                // Update results to show draft generated
+                setScanResults(prev => prev.map(r =>
+                  r.chat_id === chat.chat_id
+                    ? { ...r, status: 'draft_ready', draft: genData.draft }
+                    : r
+                ));
+              } else {
+                setScanResults(prev => prev.map(r =>
+                  r.chat_id === chat.chat_id
+                    ? { ...r, status: 'draft_failed', reason: 'Kon geen draft maken' }
+                    : r
+                ));
+              }
+            }
+          } catch {}
+        }
+        setGeneratingForChat(null);
+        // Refresh drafts from server
         try {
-          const qRes = await fetch('/api/agent/queue');
+          const qRes: Response = await fetch('/api/agent/queue');
           if (qRes.ok) {
             const q = await qRes.json();
             smartSetDrafts(q.drafts || []);
             setSentToday(q.sent_today || 0);
           }
         } catch {}
-
-        showToast(
-          allSuggestions.length > 0
-            ? '🎯 ' + totalScanned + ' chats gescand — ' + allSuggestions.length + ' interessante gevonden!'
-            : '✓ ' + totalScanned + ' chats gescand — geen actie nodig',
-          allSuggestions.length > 0 ? 'success' : 'info'
-        );
-      } catch {
-        setAutoScanning(false);
-        setScanProgress('');
-        showToast('✕ Scan error', 'error');
+        showToast('✓ Alle drafts klaar — check hieronder', 'success');
       }
-    })();
-
-    (window as any).__copilotScan = scanPromise;
+    } catch (err) {
+      setAutoScanning(false);
+      setScanProgress('');
+      showToast('Scan error: ' + err, 'error');
+    }
   }
 
   async function generateDraftsForSelected() {
@@ -671,7 +672,7 @@ export default function Dashboard() {
 
             {copilotMode === 'autoscan' ? (
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
                   <div>
                     <h2 style={{ fontSize: '16px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <span style={{
@@ -682,7 +683,7 @@ export default function Dashboard() {
                       🚀 Smart Scan
                     </h2>
                     <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', marginLeft: '32px' }}>
-                      De Copilot scant je inbox en vindt chats met potentie
+                      Scant al je chats, beoordeelt ze en maakt drafts klaar
                     </p>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -696,9 +697,9 @@ export default function Dashboard() {
                         border: '1px solid var(--border)', cursor: 'pointer',
                       }}
                     >
-                      <option value={25}>25 chats</option>
-                      <option value={50}>50 chats</option>
-                      <option value={100}>100 chats</option>
+                      <option value={25}>Laatste 25 chats</option>
+                      <option value={50}>Laatste 50 chats</option>
+                      <option value={100}>Laatste 100 chats</option>
                     </select>
                     <button
                       className="btn-primary"
@@ -706,112 +707,105 @@ export default function Dashboard() {
                       disabled={autoScanning}
                       style={{ fontSize: '13px', padding: '10px 24px' }}
                     >
-                      {autoScanning ? '⏳ Scanning...' : '🚀 Start Copilot Scan'}
+                      {autoScanning ? '⏳ Scanning...' : '🚀 Start Scan'}
                     </button>
                   </div>
                 </div>
 
+                {/* Scanning progress */}
                 {autoScanning && (
-                  <div style={{ padding: '24px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                      <div className="spinner" style={{ width: '20px', height: '20px', flexShrink: 0 }} />
-                      <div style={{ fontSize: '13px', color: 'var(--accent)', fontWeight: 600 }}>{scanProgress}</div>
+                  <div style={{ padding: '16px', textAlign: 'center' }}>
+                    <div className="spinner" style={{ margin: '0 auto 8px', width: '24px', height: '24px' }} />
+                    <div style={{ fontSize: '13px', color: 'var(--accent)' }}>{scanProgress}</div>
+                  </div>
+                )}
+
+                {/* Results: ALL chats with assessment */}
+                {scanResults.length > 0 && (
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                      <span>📊 {scanResults.length} chats gescand</span>
+                      <span>🎯 {scanResults.filter((r: any) => r.status === 'interesting' || r.status === 'draft_ready').length} interessant
+                        {generatingForChat ? ' · ⏳ Drafts genereren...' : ''}
+                      </span>
                     </div>
-                    {/* Progress bar */}
-                    <div style={{ height: '4px', borderRadius: '4px', background: 'rgba(255,255,255,0.06)', overflow: 'hidden', marginBottom: '8px' }}>
-                      <div style={{
-                        height: '100%', borderRadius: '4px',
-                        background: 'linear-gradient(90deg, #3b82f6, #1d4ed8)',
-                        width: scanStats ? ((scanStats.scanned / scanLimit) * 100) + '%' : '10%',
-                        transition: 'width 0.5s ease',
-                      }} />
+                    <div style={{ maxHeight: '500px', overflowY: 'auto', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                      {scanResults.map((r: any, i: number) => (
+                        <div key={r.chat_id || i} style={{
+                          padding: '10px 14px',
+                          borderBottom: '1px solid var(--border)',
+                          display: 'flex', alignItems: 'center', gap: '10px',
+                          background: r.status === 'draft_ready' ? 'rgba(34,197,94,0.06)'
+                            : r.status === 'interesting' ? 'rgba(59,130,246,0.06)'
+                            : r.status === 'draft_failed' ? 'rgba(239,68,68,0.06)'
+                            : 'transparent',
+                          fontSize: '13px',
+                          opacity: r.status === 'not_interesting' || r.status === 'skipped' || r.status === 'empty' ? 0.5 : 1,
+                        }}>
+                          {/* Status icon */}
+                          <span style={{ fontSize: '16px', flexShrink: 0, width: '22px', textAlign: 'center' }}>
+                            {generatingForChat === r.chat_id ? '⏳'
+                              : r.status === 'draft_ready' ? '✅'
+                              : r.status === 'interesting' ? '🎯'
+                              : r.status === 'draft_failed' ? '❌'
+                              : r.status === 'has_draft' ? '📝'
+                              : r.status === 'skipped' ? '🚫'
+                              : r.status === 'empty' ? '💬'
+                              : r.status === 'error' ? '⚠️'
+                              : r.status === 'not_interesting' ? '—'
+                              : '—'}
+                          </span>
+
+                          {/* Name + details */}
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {r.name}
+                            </div>
+                            <div style={{ fontSize: '11px', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {r.reason}
+                              {r.last_message_age ? ' · ' + r.last_message_age : ''}
+                              {r.message_count ? ' · ' + r.message_count + ' berichten' : ''}
+                              {r.turns ? ' · ' + r.turns + ' beurten' : ''}
+                            </div>
+                            {/* Show generated draft preview */}
+                            {r.status === 'draft_ready' && r.draft && (
+                              <div style={{ fontSize: '11px', color: 'var(--success)', marginTop: '4px', fontStyle: 'italic' }}>
+                                ✏️ &ldquo;{r.draft.message.substring(0, 120)}...&rdquo;
+                              </div>
+                            )}
+                            {generatingForChat === r.chat_id && (
+                              <div style={{ fontSize: '11px', color: 'var(--accent)', marginTop: '4px' }}>
+                                ⏳ Draft aan het genereren...
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Interest score badge */}
+                          {r.interest_score > 0 && (
+                            <span style={{
+                              padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 700, flexShrink: 0,
+                              background: r.interest_score >= 4 ? 'rgba(34,197,94,0.15)' : r.interest_score >= 2 ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.06)',
+                              color: r.interest_score >= 4 ? 'var(--success)' : r.interest_score >= 2 ? 'var(--accent)' : 'var(--text-muted)',
+                            }}>
+                              {r.interest_score}/10
+                            </span>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-muted)' }}>
-                      <span>{scanStats ? scanStats.scanned + '/' + scanLimit + ' gescand' : 'Starten...'}</span>
-                      <span>{scanStats && scanStats.found > 0 ? '🎯 ' + scanStats.found + ' interessant' : ''}</span>
-                    </div>
-                    {/* Show results streaming in as they come */}
-                    {autoScanResults.length > 0 && (
-                      <div style={{ marginTop: '12px', fontSize: '11px', color: 'var(--text-muted)' }}>
-                        Eerste resultaten:
+                    {!autoScanning && !generatingForChat && (
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', padding: '8px 0', textAlign: 'center' }}>
+                        ↓ Drafts staan klaar in Step 2 hieronder — beoordeel en keur goed
                       </div>
                     )}
                   </div>
                 )}
 
-                {!autoScanning && autoScanResults.length > 0 && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>
-                      🎯 {autoScanResults.length} interessante gesprekken gevonden:
-                    </div>
-                    {autoScanResults.map((s: any) => (
-                      <div key={s.chat_id} style={{
-                        padding: '14px 16px', borderRadius: '12px',
-                        background: 'rgba(59,130,246,0.06)',
-                        border: '1px solid rgba(59,130,246,0.15)',
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                          <div>
-                            <div style={{ fontWeight: 700, fontSize: '14px' }}>{s.prospect_name}</div>
-                            {s.prospect_headline && (
-                              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{s.prospect_headline}</div>
-                            )}
-                          </div>
-                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                            {s.interest_reasons.map((r: string, i: number) => (
-                              <span key={i} style={{
-                                fontSize: '10px', padding: '2px 8px', borderRadius: '6px',
-                                background: 'rgba(59,130,246,0.15)', color: 'var(--accent)', whiteSpace: 'nowrap',
-                              }}>{r}</span>
-                            ))}
-                          </div>
-                        </div>
-                        {s.ai_reasoning && (
-                          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px', fontStyle: 'italic' }}>
-                            💡 {s.ai_reasoning.substring(0, 200)}{s.ai_reasoning.length > 200 ? '...' : ''}
-                          </div>
-                        )}
-                        <div style={{
-                          padding: '10px 12px', borderRadius: '8px',
-                          background: 'rgba(255,255,255,0.03)', fontSize: '13px',
-                          borderLeft: '3px solid var(--accent)',
-                        }}>
-                          {s.draft_message}
-                        </div>
-                        {s.phase && (
-                          <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--text-muted)' }}>
-                            Fase: <strong>{s.phase}</strong> · Confidence: {s.confidence || 'medium'}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', padding: '8px 0', textAlign: 'center' }}>
-                      ↓ Drafts staan klaar in Step 2 hieronder — beoordeel en keur goed
-                    </div>
-                  </div>
-                )}
-
-                {/* Scan stats summary */}
-                {!autoScanning && scanStats && (
-                  <div style={{
-                    padding: '10px 14px', borderRadius: '8px', marginBottom: '8px',
-                    background: 'rgba(59,130,246,0.06)', fontSize: '12px', color: 'var(--text-muted)',
-                    display: 'flex', justifyContent: 'space-between',
-                  }}>
-                    <span>📊 {scanStats.scanned} chats gescand</span>
-                    <span>🎯 {scanStats.found} interessant gevonden</span>
-                  </div>
-                )}
-
-                {!autoScanning && autoScanResults.length === 0 && !scanStats && (
+                {/* Empty state */}
+                {!autoScanning && scanResults.length === 0 && (
                   <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
-                    Klik op <strong>Start Copilot Scan</strong> om je inbox te laten analyseren
-                  </div>
-                )}
-
-                {!autoScanning && autoScanResults.length === 0 && scanStats && (
-                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
-                    ✓ {scanStats.scanned} chats gescand — geen opvolging nodig op dit moment
+                    Klik op <strong>Start Scan</strong> om je inbox te laten analyseren.<br/>
+                    <span style={{ fontSize: '11px' }}>De copilot loopt door al je chats, beoordeelt ze, en maakt drafts klaar voor de interessante.</span>
                   </div>
                 )}
               </div>
