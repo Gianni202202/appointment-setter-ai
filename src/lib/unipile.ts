@@ -13,7 +13,7 @@ function headers() {
   };
 }
 
-function randomDelay(minMs: number, maxMs: number): Promise<void> {
+export function randomDelay(minMs: number, maxMs: number): Promise<void> {
   const ms = Math.floor(Math.random() * (maxMs - minMs)) + minMs;
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -66,15 +66,25 @@ export async function searchLinkedIn(params: {
   }
   if (params.cursor) body.cursor = params.cursor;
   
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: headers(),
-    body: JSON.stringify(body),
-  });
+  console.log('[Unipile Search] Calling:', url);
+  console.log('[Unipile Search] Body:', JSON.stringify(body));
+  
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify(body),
+    });
+  } catch (fetchErr: any) {
+    console.error('[Unipile Search] Fetch failed:', fetchErr.message, 'DSN:', UNIPILE_DSN?.substring(0, 30));
+    throw new Error('Unipile API unreachable: ' + fetchErr.message + ' (DSN: ' + (UNIPILE_DSN ? UNIPILE_DSN.substring(0, 30) + '...' : 'EMPTY') + ')');
+  }
   
   if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Unipile Search error (${response.status}): ${error}`);
+    const errorText = await response.text();
+    console.error('[Unipile Search] Error response:', response.status, errorText.substring(0, 200));
+    throw new Error(`Unipile Search error (${response.status}): ${errorText.substring(0, 200)}`);
   }
   
   return response.json();
@@ -169,7 +179,7 @@ export async function sendInvitation(providerId: string, message?: string): Prom
   return { success: true };
 }
 
-export { randomDelay };
+
 
 
 // ============================================
