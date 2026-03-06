@@ -126,14 +126,14 @@ export default function AgentChat({ onModeChange, onRefreshDashboard }: AgentCha
         style={{
           position: 'fixed', bottom: '20px', right: '20px', zIndex: 10000,
           width: '56px', height: '56px', borderRadius: '50%',
-          background: isOpen ? 'var(--danger)' : 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
-          border: 'none', color: '#fff', fontSize: '22px', cursor: 'pointer',
+          background: isOpen ? 'var(--danger)' : 'linear-gradient(135deg, #7c3aed, #3b82f6)',
+          border: 'none', color: '#fff', fontSize: '20px', cursor: 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: '0 4px 20px rgba(29, 78, 216, 0.4)',
-          transition: 'all 0.2s',
+          boxShadow: isOpen ? '0 4px 20px rgba(239,68,68,0.4)' : '0 4px 24px rgba(124, 58, 237, 0.5)',
+          transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
         }}
       >
-        {isOpen ? '✕' : '🤖'}
+        {isOpen ? '✕' : '⚡'}
       </button>
 
       {/* Chat panel */}
@@ -152,20 +152,20 @@ export default function AgentChat({ onModeChange, onRefreshDashboard }: AgentCha
           {/* Header */}
           <div style={{
             padding: '14px 16px',
-            background: 'linear-gradient(135deg, rgba(29,78,216,0.15), rgba(59,130,246,0.05))',
+            background: 'linear-gradient(135deg, rgba(124,58,237,0.12), rgba(59,130,246,0.06))',
             borderBottom: '1px solid var(--border)',
-            display: 'flex', alignItems: 'center', gap: '10px',
+            display: 'flex', alignItems: 'center', gap: '12px',
           }}>
             <div style={{
-              width: '32px', height: '32px', borderRadius: '50%',
-              background: 'linear-gradient(135deg, #1d4ed8, #3b82f6)',
+              width: '36px', height: '36px', borderRadius: '12px',
+              background: 'linear-gradient(135deg, #7c3aed, #3b82f6)',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: '14px',
-            }}>🤖</div>
+              fontSize: '18px', boxShadow: '0 2px 8px rgba(124,58,237,0.3)',
+            }}>⚡</div>
             <div>
-              <div style={{ fontWeight: 600, fontSize: '14px' }}>Agent Control</div>
+              <div style={{ fontWeight: 700, fontSize: '15px', letterSpacing: '-0.01em' }}>Jarvis</div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                Chat om je agent aan te sturen
+                Jouw AI assistent • Volledige controle
               </div>
             </div>
           </div>
@@ -177,9 +177,9 @@ export default function AgentChat({ onModeChange, onRefreshDashboard }: AgentCha
           }}>
             {messages.length === 0 && (
               <div style={{ textAlign: 'center', padding: '24px 12px', color: 'var(--text-muted)', fontSize: '13px' }}>
-                <div style={{ fontSize: '32px', marginBottom: '8px' }}>👋</div>
-                <p style={{ marginBottom: '12px' }}>Hey Gianni! Ik ben je agent controller.</p>
-                <p>Vertel me wat je wilt. Bijvoorbeeld:</p>
+                <div style={{ fontSize: '32px', marginBottom: '8px' }}>⚡</div>
+                <p style={{ marginBottom: '12px', fontWeight: 500 }}>Hey Gianni! Jarvis hier, klaar om aan de slag te gaan.</p>
+                <p>Wat kan ik voor je doen?</p>
                 <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {quickActions.map(qa => (
                     <button
