@@ -275,7 +275,7 @@ export default function SettingsForm({ initialConfig }: SettingsFormProps) {
             className="input-field"
             rows={6}
             placeholder={"Voorbeeld:\n- Houd berichten onder de 200 tekens\n- Begin altijd met een procesvraag\n- Gebruik nooit 'Ben benieuwd'\n- Bij 'warm' fase, bied direct Loom aan"}
-            value={config.best_practices || ''}
+            value={config.best_practices ?? ''}
             onChange={e => setConfig(prev => ({ ...prev, best_practices: e.target.value }))}
             style={{ resize: 'vertical' }}
           />

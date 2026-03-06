@@ -84,7 +84,7 @@ export async function GET(request: Request) {
     results.retries = { error: String(retryErr) };
   }
 
-  // 3. AUTO MODE: scan for new messages and generate drafts
+  // 4. AUTO MODE: scan for new messages and generate drafts
   if (mode === 'auto' && DSN && API_KEY && ACCOUNT_ID) {
     if (!isWithinWorkingHours()) {
       results.auto = { skipped: true, reason: 'Outside working hours' };

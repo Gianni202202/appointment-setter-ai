@@ -178,8 +178,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (mode === 'off') return;
     const interval = setInterval(async () => {
-      // Skip if generating or user action was recent
-      if (generating || autoScanning) return;
+      // Skip if generating, scanning, or any user action is in progress
+      if (generating || autoScanning || actionInProgress || sendingBatch || rejectingDraftId) return;
       try {
         const res = await fetch('/api/agent/queue');
         if (res.ok) {
@@ -423,11 +423,11 @@ export default function Dashboard() {
     setRegeneratingDraftId(draftId);
 
     try {
-      // Remove old draft on server (but keep it in UI with loading state)
+      // Remove old draft on server — records learning data with "Regenerated" reason
       await fetch('/api/agent/queue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ draft_id: draftId, action: 'reject' }),
+        body: JSON.stringify({ draft_id: draftId, action: 'reject', rejection_reason: 'Regenerated — bericht opnieuw gegenereerd' }),
       });
 
       // Small delay
@@ -535,7 +535,7 @@ export default function Dashboard() {
           const qRes = await fetch('/api/agent/queue');
           if (qRes.ok) {
             const q = await qRes.json();
-            setDrafts(q.drafts || []);
+            smartSetDrafts(q.drafts || []);
             setSentToday(q.sent_today || 0);
           }
         } catch {}
