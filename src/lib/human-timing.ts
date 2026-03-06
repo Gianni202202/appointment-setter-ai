@@ -56,10 +56,16 @@ export function calculateReplyDelay(options: {
   }
 
   // 3. GOLDEN NUGGET #3: Never reply faster than ~30% of prospect's avg response time
+  // BUT: HARD CAP at 24 hours. If prospect took a week, we don't wait a week.
   if (prospectAvgResponseTimeMs && prospectAvgResponseTimeMs > 0) {
-    const minDelay = prospectAvgResponseTimeMs * 0.3;
-    baseDelayMs = Math.max(baseDelayMs, minDelay);
+    const MAX_REPLY_DELAY_MS = 24 * 60 * 60 * 1000; // 24 hours hard cap
+    const minDelay = Math.min(prospectAvgResponseTimeMs * 0.3, MAX_REPLY_DELAY_MS);
+    baseDelayMs = Math.min(Math.max(baseDelayMs, minDelay), MAX_REPLY_DELAY_MS);
   }
+
+  // HARD CAP: Never wait longer than 24 hours regardless of phase or prospect pace
+  const ABSOLUTE_MAX_DELAY = 24 * 60 * 60 * 1000;
+  baseDelayMs = Math.min(baseDelayMs, ABSOLUTE_MAX_DELAY);
 
   // Apply jitter (±30%)
   return jitter(baseDelayMs, 0.3);
