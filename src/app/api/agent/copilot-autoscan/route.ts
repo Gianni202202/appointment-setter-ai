@@ -349,7 +349,7 @@ async function scanChats(targetCount: number, cursor: string | null) {
 // =====================================================
 // PHASE 2: Generate draft for a single chat
 // =====================================================
-async function generateDraftForChat(chatId: string) {
+export async function generateDraftForChat(chatId: string, customInstruction?: string) {
   const config = await getConfigAsync();
 
   const msgsUrl = 'https://' + DSN + '/api/v1/chats/' + chatId + '/messages?limit=10';
@@ -405,7 +405,7 @@ async function generateDraftForChat(chatId: string) {
     name: prospectName,
     headline: prospectHeadline,
     company: prospectCompany,
-  }, undefined, undefined, true); // legendaryContext=undefined, customInstruction=undefined, useBulkModel=true
+  }, undefined, customInstruction, true); // legendaryContext=undefined, customInstruction passed through, useBulkModel=true
 
   if (aiResponse.message && !aiResponse.message.includes('[AI kon geen antwoord')) {
     const draft = await addDraft({
@@ -476,9 +476,10 @@ export async function POST(request: Request) {
 
     if (action === 'generate_draft') {
       const chatId = body.chat_id;
+      const customInstruction = body.custom_instruction || undefined;
       if (!chatId) return NextResponse.json({ error: 'chat_id required' }, { status: 400 });
       try {
-        const result = await generateDraftForChat(chatId);
+        const result = await generateDraftForChat(chatId, customInstruction);
         return NextResponse.json({ success: !!result, draft: result });
       } catch (draftErr) {
         console.error('[generate_draft] Error for chat', chatId, ':', draftErr);

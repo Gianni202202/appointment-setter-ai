@@ -8,6 +8,7 @@ import {
   logActivity,
 } from '@/lib/database';
 import { getDailyCapacity } from '@/lib/human-timing';
+import { generateDraftForChat } from '@/app/api/agent/copilot-autoscan/route';
 
 // Pro plan: allow up to 60s execution
 export const maxDuration = 60;
@@ -374,7 +375,6 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
 
             // If force_regenerate with no specific chat_ids → regenerate ALL pending drafts
             if (forceRegenerate && chatIdsToProcess.length === 0 && pendingDrafts.length > 0) {
-              // Remove existing pending drafts so they get regenerated
               for (const draft of pendingDrafts) {
                 await removeDraft(draft.id);
               }
@@ -385,7 +385,6 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
             // If no specific chat_ids and not force_regenerate, find chats needing attention
             if (chatIdsToProcess.length === 0) {
               const maxAge = action.params?.maxAgeDays || scanSettings.maxAgeDays;
-              const cutoffDate = new Date(Date.now() - maxAge * 24 * 60 * 60 * 1000);
               const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=50`, {
                 headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
                 cache: 'no-store',
@@ -399,11 +398,11 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
               const existingDraftChatIds = new Set(
                 (await getDrafts()).filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
               );
-              for (const chat of chats) {
-                if (chat.account_id && chat.account_id !== ACCOUNT_ID) continue;
-                if (!forceRegenerate && existingDraftChatIds.has(chat.id)) continue;
-                const lastMsg = chat.last_message;
-                if (lastMsg) chatIdsToProcess.push(chat.id);
+              for (const c of chats) {
+                if (c.account_id && c.account_id !== ACCOUNT_ID) continue;
+                if (!forceRegenerate && existingDraftChatIds.has(c.id)) continue;
+                const lastMsg = c.last_message;
+                if (lastMsg) chatIdsToProcess.push(c.id);
               }
             }
 
@@ -412,34 +411,30 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
               break;
             }
 
-            // Use copilot-autoscan to generate drafts with instruction
-            const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : (process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000');
+            // Direct function call (NOT HTTP fetch — avoids Vercel serverless timeout)
             let draftsCreated = 0;
             let draftsFailed = 0;
+            const draftErrors: string[] = [];
 
-            // Process up to 5 chats to stay within timeout
-            for (const chatId of chatIdsToProcess.slice(0, 5)) {
+            for (const chatId of chatIdsToProcess.slice(0, 8)) {
               try {
-                const genRes = await fetch(`${baseUrl}/api/agent/copilot-autoscan`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ action: 'generate_draft', chat_id: chatId, custom_instruction: instruction }),
-                });
-                if (genRes.ok) {
-                  const genData = await genRes.json();
-                  if (genData.success) draftsCreated++;
-                  else draftsFailed++;
+                const result = await generateDraftForChat(chatId, instruction || undefined);
+                if (result) {
+                  draftsCreated++;
                 } else {
                   draftsFailed++;
+                  draftErrors.push(chatId.substring(0, 8) + ': no result');
                 }
-              } catch {
+              } catch (err: any) {
                 draftsFailed++;
+                draftErrors.push(chatId.substring(0, 8) + ': ' + (err?.message || String(err)).substring(0, 50));
               }
             }
 
+            const errorDetail = draftErrors.length > 0 ? ' Errors: ' + draftErrors.join('; ') : '';
             actionResults.push({
               type: 'GENERATE_DRAFTS',
-              result: `${draftsCreated} drafts created${draftsFailed > 0 ? ', ' + draftsFailed + ' failed' : ''} (out of ${chatIdsToProcess.length} total chats)${instruction ? ' — instruction: ' + instruction.substring(0, 60) : ''}`,
+              result: `${draftsCreated} drafts created${draftsFailed > 0 ? ', ' + draftsFailed + ' failed' : ''} (out of ${chatIdsToProcess.length} total chats)${instruction ? ' — instruction: ' + instruction.substring(0, 60) : ''}${errorDetail}`,
             });
             break;
           }
