@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import AgentChat from '@/components/AgentChat';
 
@@ -60,6 +60,9 @@ export default function Dashboard() {
   const [loadingChats, setLoadingChats] = useState(false);
 
   const router = useRouter();
+
+  // Ref to track if user is mid-action (avoids stale closure in auto-refresh interval)
+  const userBusyRef = useRef(false);
 
   // === DRAFT PERSISTENCE ===
   // Server uses /tmp which Vercel wipes on cold starts.
@@ -173,13 +176,18 @@ export default function Dashboard() {
     if (mode === 'copilot') loadCopilotChats();
   }, [mode, loadCopilotChats]);
 
+  // Keep userBusyRef in sync with state (avoids stale closure in interval)
+  useEffect(() => {
+    userBusyRef.current = !!(generating || autoScanning || actionInProgress || sendingBatch || rejectingDraftId);
+  });
+
   // Auto-refresh drafts every 15s when active
   // But skip refresh if user just took an action (prevents UI flash)
   useEffect(() => {
     if (mode === 'off') return;
     const interval = setInterval(async () => {
       // Skip if generating, scanning, or any user action is in progress
-      if (generating || autoScanning || actionInProgress || sendingBatch || rejectingDraftId) return;
+      if (userBusyRef.current) return;
       try {
         const res = await fetch('/api/agent/queue');
         if (res.ok) {
