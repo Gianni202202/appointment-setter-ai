@@ -11,7 +11,7 @@ import { getDailyCapacity } from '@/lib/human-timing';
 import { generateDraftForChat } from '@/lib/draft-generator';
 
 // Pro plan: allow up to 60s execution
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY || '';
 const DSN = process.env.UNIPILE_DSN || '';
@@ -438,43 +438,31 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
             const forceRegenerate = action.params?.force_regenerate === true;
             let chatIdsToProcess: string[] = action.params?.chat_ids || [];
 
-            // Build map of old drafts per chat_id for replacement
-            const oldDraftsByChatId = new Map<string, string[]>();
-            for (const d of pendingDrafts) {
-              const existing = oldDraftsByChatId.get(d.chat_id) || [];
-              existing.push(d.id);
-              oldDraftsByChatId.set(d.chat_id, existing);
-            }
-
-            // If force_regenerate with no specific chat_ids → regenerate ALL pending drafts
+            // STEP 1: Collect chat_ids to process
             if (forceRegenerate && chatIdsToProcess.length === 0 && pendingDrafts.length > 0) {
-              chatIdsToProcess = pendingDrafts.map(d => d.chat_id);
-              // Deduplicate chat_ids (in case multiple drafts per chat)
-              chatIdsToProcess = [...new Set(chatIdsToProcess)];
-              actionResults.push({ type: 'GENERATE_DRAFTS', result: `Regenerating ${chatIdsToProcess.length} drafts with new instruction...` });
+              chatIdsToProcess = [...new Set(pendingDrafts.map(d => d.chat_id))];
             }
 
-            // If no specific chat_ids and not force_regenerate, find chats needing attention
             if (chatIdsToProcess.length === 0) {
-              const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=50`, {
-                headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
-                cache: 'no-store',
-              });
-              if (!chatsRes.ok) {
-                actionResults.push({ type: 'GENERATE_DRAFTS', result: 'Failed to fetch chats' });
-                break;
-              }
-              const chatsData = await chatsRes.json();
-              const chats = chatsData.items || chatsData || [];
-              const existingDraftChatIds = new Set(
-                (await getDrafts()).filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
-              );
-              for (const c of chats) {
-                if (c.account_id && c.account_id !== ACCOUNT_ID) continue;
-                if (!forceRegenerate && existingDraftChatIds.has(c.id)) continue;
-                const lastMsg = c.last_message;
-                if (lastMsg) chatIdsToProcess.push(c.id);
-              }
+              try {
+                const chatsRes = await fetch(`https://${DSN}/api/v1/chats?account_id=${ACCOUNT_ID}&limit=50`, {
+                  headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
+                  cache: 'no-store',
+                });
+                if (chatsRes.ok) {
+                  const chatsData = await chatsRes.json();
+                  const chats = chatsData.items || chatsData || [];
+                  const existingDraftChatIds = new Set(
+                    (await getDrafts()).filter(d => d.status === 'pending' || d.status === 'approved').map(d => d.chat_id)
+                  );
+                  for (const c of chats) {
+                    if (c.account_id && c.account_id !== ACCOUNT_ID) continue;
+                    if (!forceRegenerate && existingDraftChatIds.has(c.id)) continue;
+                    const lastMsg = c.last_message;
+                    if (lastMsg) chatIdsToProcess.push(c.id);
+                  }
+                }
+              } catch {}
             }
 
             if (chatIdsToProcess.length === 0) {
@@ -482,39 +470,47 @@ ${(config.strategies || []).map((s: any) => `  - "${s.name}" (${s.scenario}, ${s
               break;
             }
 
-            // Process each chat: remove old draft → generate new one (no duplicates)
+            // STEP 2: Remove ALL old drafts for chats being processed (instant Redis ops)
+            let draftsRemoved = 0;
+            for (const chatId of chatIdsToProcess) {
+              const oldDrafts = pendingDrafts.filter(d => d.chat_id === chatId);
+              for (const old of oldDrafts) {
+                await removeDraft(old.id);
+                draftsRemoved++;
+              }
+            }
+            if (draftsRemoved > 0) {
+              actionResults.push({ type: 'GENERATE_DRAFTS', result: `${draftsRemoved} oude drafts verwijderd` });
+            }
+
+            // STEP 3: Generate new drafts — MAX 4 per request (avoids Vercel timeout)
+            const MAX_PER_BATCH = 4;
+            const batch = chatIdsToProcess.slice(0, MAX_PER_BATCH);
+            const remaining = chatIdsToProcess.length - batch.length;
             let draftsCreated = 0;
             let draftsFailed = 0;
-            let draftsRemoved = 0;
             const draftErrors: string[] = [];
 
-            for (const chatId of chatIdsToProcess.slice(0, 10)) {
+            for (const chatId of batch) {
               try {
-                // Step 1: Remove old drafts for this chat_id
-                const oldIds = oldDraftsByChatId.get(chatId) || [];
-                for (const oldId of oldIds) {
-                  await removeDraft(oldId);
-                  draftsRemoved++;
-                }
-
-                // Step 2: Generate new draft with instruction
                 const result = await generateDraftForChat(chatId, instruction || undefined);
                 if (result) {
                   draftsCreated++;
                 } else {
                   draftsFailed++;
-                  draftErrors.push(chatId.substring(0, 8) + ': AI returned no result');
+                  draftErrors.push(chatId.substring(0, 8) + ': no result');
                 }
               } catch (err: any) {
                 draftsFailed++;
-                draftErrors.push(chatId.substring(0, 8) + ': ' + (err?.message || String(err)).substring(0, 50));
+                draftErrors.push(chatId.substring(0, 8) + ': ' + (err?.message || String(err)).substring(0, 40));
               }
             }
 
             const errorDetail = draftErrors.length > 0 ? ' | Errors: ' + draftErrors.join('; ') : '';
+            const remainingMsg = remaining > 0 ? ` | ${remaining} chats wachten nog — vraag me om door te gaan` : '';
             actionResults.push({
               type: 'GENERATE_DRAFTS',
-              result: `${draftsCreated} new drafts created, ${draftsRemoved} old removed${draftsFailed > 0 ? ', ' + draftsFailed + ' failed' : ''} (of ${chatIdsToProcess.length} chats)${instruction ? ' — angle: ' + instruction.substring(0, 50) + '...' : ''}${errorDetail}`,
+              result: `${draftsCreated}/${batch.length} drafts aangemaakt${draftsFailed > 0 ? ', ' + draftsFailed + ' mislukt' : ''}${instruction ? ' — angle: ' + instruction.substring(0, 40) : ''}${remainingMsg}${errorDetail}`,
             });
             break;
           }
