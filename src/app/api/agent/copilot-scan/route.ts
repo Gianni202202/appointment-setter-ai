@@ -54,17 +54,37 @@ export async function POST(request: Request) {
         }
         const chatData = await chatRes.json();
 
-        // Extract prospect info
+        // Extract prospect info via dedicated /attendees endpoint (inline attendees array is often empty)
         let prospectName = 'Unknown';
         let prospectHeadline = '';
         let prospectCompany = '';
-        if (chatData.attendees && Array.isArray(chatData.attendees)) {
-          for (const a of chatData.attendees) {
-            if (a.is_me) continue;
-            prospectName = a.display_name || a.name || a.identifier || prospectName;
-            prospectHeadline = a.headline || '';
-            prospectCompany = a.company || '';
-            break;
+        try {
+          const attendeesRes = await fetch(`https://${DSN}/api/v1/chats/${chatId}/attendees`, {
+            headers: { 'X-API-KEY': API_KEY, 'Accept': 'application/json' },
+            cache: 'no-store',
+          });
+          if (attendeesRes.ok) {
+            const attendeesData = await attendeesRes.json();
+            const attendees = attendeesData.items || attendeesData || [];
+            for (const a of attendees) {
+              if (a.is_me) continue;
+              prospectName = a.display_name || a.name || a.identifier || prospectName;
+              prospectHeadline = a.headline || a.tagline || '';
+              prospectCompany = a.company || a.organization || '';
+              break;
+            }
+          }
+        } catch (e) {
+          console.warn('[Copilot] Failed to fetch attendees for', chatId, e);
+        }
+        // Fallback: try chat object fields
+        if (prospectName === 'Unknown') {
+          if (chatData.attendees && Array.isArray(chatData.attendees)) {
+            for (const a of chatData.attendees) {
+              if (a.is_me) continue;
+              prospectName = a.display_name || a.name || a.identifier || prospectName;
+              break;
+            }
           }
         }
         if (prospectName === 'Unknown') {

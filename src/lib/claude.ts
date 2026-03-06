@@ -561,11 +561,23 @@ Houd je verder aan alle andere regels.`;
   const data = await response.json();
   const rawContent = data.content[0]?.text || '{}';
 
-  // Strip markdown code blocks (```json ... ``` or ``` ... ```)
-  // Claude sometimes wraps JSON responses in these
+  // Extract JSON from Claude's response — it may be wrapped in markdown,
+  // have surrounding text, or be clean JSON
   let content = rawContent.trim();
-  if (content.startsWith('```')) {
-    content = content.replace(/^```(?:json)?\s*\n?/, '').replace(/\n?```\s*$/, '');
+
+  // Strip markdown code blocks
+  if (content.includes('```')) {
+    const jsonBlock = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+    if (jsonBlock) content = jsonBlock[1].trim();
+  }
+
+  // If it still doesn't start with {, try to find the JSON object
+  if (!content.startsWith('{')) {
+    const jsonStart = content.indexOf('{');
+    const jsonEnd = content.lastIndexOf('}');
+    if (jsonStart !== -1 && jsonEnd > jsonStart) {
+      content = content.substring(jsonStart, jsonEnd + 1);
+    }
   }
 
   try {
@@ -585,17 +597,20 @@ Houd je verder aan alle andere regels.`;
     }
 
     return parsed;
-  } catch {
+  } catch (parseError) {
+    console.error('[Claude] JSON parse failed. Raw:', rawContent.substring(0, 300));
+    console.error('[Claude] Cleaned:', content.substring(0, 300));
+    console.error('[Claude] Error:', parseError);
     // Fallback: try to extract the message field with regex even if full JSON fails
     let extractedMessage = '';
     let extractedReasoning = 'Failed to parse Claude response. Flagged for human review.';
 
-    const msgMatch = rawContent.match(/"message"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"/);
+    const msgMatch = rawContent.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/);
     if (msgMatch) {
       extractedMessage = msgMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
     }
 
-    const reasonMatch = rawContent.match(/"reasoning"\s*:\s*"((?:[^"\\\\]|\\\\.)*)"/);
+    const reasonMatch = rawContent.match(/"reasoning"\s*:\s*"((?:[^"\\]|\\.)*)"/);
     if (reasonMatch) {
       extractedReasoning = reasonMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
     }
