@@ -119,7 +119,7 @@ async function scanChats(targetCount: number, cursor: string | null) {
         const hoursAgo = (Date.now() - lastMsgTime) / (1000 * 60 * 60);
         const daysAgo = Math.floor(hoursAgo / 24);
 
-        // === INTEREST SCORING ===
+        // === INTEREST SCORING — realistic per scenario ===
         let interestScore = 0;
         const interestReasons: string[] = [];
         const prospectMsgs = messages.filter((m: any) => m.role === 'prospect');
@@ -129,67 +129,96 @@ async function scanChats(targetCount: number, cursor: string | null) {
           return acc;
         }, 0);
 
-        // === SCENARIO 1: Connectieverzoek geaccepteerd, nog geen follow-up ===
-        // Gianni stuurde connectie-note, prospect heeft nog niet gereageerd
-        // Dit is HEEL interessant — prospect heeft connectie geaccepteerd!
-        if (agentMsgs.length >= 1 && prospectMsgs.length === 0 && messages.length <= 2) {
-          interestScore += 4;
-          interestReasons.push('Connectie geaccepteerd — follow-up nodig');
-        }
-
-        // === SCENARIO 2: Prospect heeft gereageerd, wacht op antwoord ===
-        if (prospectSentLast) {
-          interestScore += 4;
-          interestReasons.push('Prospect wacht op antwoord');
-          if (hoursAgo < 24) {
+        // ─── SCENARIO A: Connectie geaccepteerd, nog geen follow-up ───
+        // (alleen agent berichten, geen prospect reply, max 2 berichten totaal)
+        const isConnectionAccept = agentMsgs.length >= 1 && prospectMsgs.length === 0 && messages.length <= 2;
+        if (isConnectionAccept) {
+          if (daysAgo <= 3) {
+            interestScore += 5;
+            interestReasons.push('Connectie recent geaccepteerd — follow-up sturen!');
+          } else if (daysAgo <= 7) {
+            interestScore += 3;
+            interestReasons.push('Connectie geaccepteerd (' + daysAgo + 'd) — nog follow-up mogelijk');
+          } else if (daysAgo <= 14) {
             interestScore += 2;
-            interestReasons.push('Recent (< 24u)');
+            interestReasons.push('Connectie ' + daysAgo + 'd geleden — laat maar alsnog');
+          } else {
+            interestScore += 1;
+            interestReasons.push('Connectie ' + daysAgo + 'd geleden — mogelijk te laat');
+          }
+        }
+
+        // ─── SCENARIO B: Prospect heeft gereageerd, wacht op jouw antwoord ───
+        if (prospectSentLast) {
+          if (hoursAgo < 6) {
+            interestScore += 6;
+            interestReasons.push('Prospect wacht op antwoord (< 6u)');
+          } else if (hoursAgo < 24) {
+            interestScore += 5;
+            interestReasons.push('Prospect wacht op antwoord (vandaag)');
           } else if (hoursAgo < 72) {
-            interestScore += 1;
-            interestReasons.push('Follow-up nodig (1-3 dagen)');
+            interestScore += 4;
+            interestReasons.push('Prospect wacht ' + daysAgo + 'd — snel opvolgen');
+          } else if (hoursAgo < 168) {
+            interestScore += 3;
+            interestReasons.push('Prospect wacht ' + daysAgo + 'd — follow-up');
+          } else {
+            interestScore += 2;
+            interestReasons.push('Prospect wacht ' + daysAgo + 'd — misschien te laat');
           }
         }
 
-        // === SCENARIO 3: Gianni stuurde laatst, geen reactie ===
-        // Nog steeds interessant als het een lopend gesprek is
-        if (!prospectSentLast && turns >= 1) {
-          interestScore += 2;
-          interestReasons.push('Lopend gesprek — check status');
-          if (hoursAgo > 48 && hoursAgo < 240) {
+        // ─── SCENARIO C: Jij stuurde laatst, geen reactie ───
+        if (!prospectSentLast && !isConnectionAccept && turns >= 1) {
+          if (hoursAgo < 48) {
             interestScore += 1;
-            interestReasons.push('Geen reactie na 2+ dagen');
+            interestReasons.push('Jij stuurde laatst — wacht op reactie');
+          } else if (hoursAgo < 120) {
+            interestScore += 2;
+            interestReasons.push('Geen reactie na ' + daysAgo + 'd — follow-up?');
+          } else if (hoursAgo < 336) {
+            interestScore += 1;
+            interestReasons.push('Geen reactie na ' + daysAgo + 'd — laatste poging?');
+          } else {
+            interestReasons.push('Geen reactie na ' + daysAgo + 'd — waarschijnlijk dood');
           }
         }
 
-        // === BONUS PUNTEN ===
-        // Prospect stelde een vraag
+        // ─── SCENARIO D: Eenzijdig gesprek, alleen jij stuurt ───
+        if (!isConnectionAccept && agentMsgs.length >= 2 && prospectMsgs.length === 0) {
+          interestScore = Math.max(interestScore - 1, 0);
+          interestReasons.push('Eenzijdig — prospect reageert niet');
+        }
+
+        // ─── BONUS PUNTEN ───
         if (prospectMsgs.some((m: any) => m.content.includes('?'))) {
           interestScore += 1;
           interestReasons.push('Prospect stelde een vraag');
         }
-
-        // Actief gesprek (meerdere beurten)
         if (turns >= 3) {
           interestScore += 1;
           interestReasons.push('Actief gesprek (' + turns + ' beurten)');
         }
-
-        // Uitgebreide prospect berichten
         const avgLen = prospectMsgs.reduce((s: number, m: any) => s + m.content.length, 0) / (prospectMsgs.length || 1);
         if (avgLen > 100 && prospectMsgs.length > 0) {
           interestScore += 1;
           interestReasons.push('Uitgebreide berichten');
         }
 
-        // === STATUS BEPALEN ===
-        // Threshold = 2 (bijna alles is interessant behalve dode gesprekken)
-        let status = 'not_interesting';
-        let reason = interestReasons.length > 0
-          ? interestReasons.join(', ') + ' (score: ' + interestScore + ')'
-          : 'Geen signalen gevonden';
-        if (interestScore >= 2) {
+        // ─── STATUS ───
+        let status: string;
+        let reason: string;
+        if (interestScore >= 4) {
           status = 'interesting';
           reason = interestReasons.join(', ');
+        } else if (interestScore >= 2) {
+          status = 'maybe';
+          reason = interestReasons.join(', ');
+        } else {
+          status = 'not_interesting';
+          reason = interestReasons.length > 0
+            ? interestReasons.join(', ')
+            : 'Geen actie nodig';
         }
 
         // Get prospect name from attendees

@@ -263,8 +263,9 @@ export default function Dashboard() {
       setAutoScanning(false);
 
       const interesting = results.filter((r: any) => r.status === 'interesting');
+      const maybe = results.filter((r: any) => r.status === 'maybe');
       showToast(
-        results.length + ' chats gescand — ' + interesting.length + ' interessant',
+        results.length + ' chats gescand — ' + interesting.length + ' interessant' + (maybe.length > 0 ? ', ' + maybe.length + ' misschien' : ''),
         interesting.length > 0 ? 'success' : 'info'
       );
 
@@ -765,7 +766,7 @@ export default function Dashboard() {
                   <div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '12px', color: 'var(--text-muted)' }}>
                       <span>📊 {scanResults.length} chats gescand</span>
-                      <span>🎯 {scanResults.filter((r: any) => r.status === 'interesting' || r.status === 'draft_ready').length} interessant
+                      <span>🎯 {scanResults.filter((r: any) => r.status === 'interesting' || r.status === 'draft_ready' || r.status === 'maybe').length} interessant
                         {generatingForChat ? ' · ⏳ Drafts genereren...' : ''}
                       </span>
                     </div>
@@ -777,16 +778,18 @@ export default function Dashboard() {
                           display: 'flex', alignItems: 'center', gap: '10px',
                           background: r.status === 'draft_ready' ? 'rgba(34,197,94,0.06)'
                             : r.status === 'interesting' ? 'rgba(59,130,246,0.06)'
+                            : r.status === 'maybe' ? 'rgba(234,179,8,0.06)'
                             : r.status === 'draft_failed' ? 'rgba(239,68,68,0.06)'
                             : 'transparent',
                           fontSize: '13px',
-                          opacity: r.status === 'not_interesting' || r.status === 'skipped' || r.status === 'empty' ? 0.5 : 1,
+                          opacity: r.status === 'not_interesting' || r.status === 'skipped' || r.status === 'empty' ? 0.4 : 1,
                         }}>
                           {/* Status icon */}
                           <span style={{ fontSize: '16px', flexShrink: 0, width: '22px', textAlign: 'center' }}>
                             {generatingForChat === r.chat_id ? '⏳'
                               : r.status === 'draft_ready' ? '✅'
                               : r.status === 'interesting' ? '🎯'
+                              : r.status === 'maybe' ? '🤔'
                               : r.status === 'draft_failed' ? '❌'
                               : r.status === 'has_draft' ? '📝'
                               : r.status === 'skipped' ? '🚫'
@@ -824,8 +827,8 @@ export default function Dashboard() {
                           {r.interest_score > 0 && (
                             <span style={{
                               padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: 700, flexShrink: 0,
-                              background: r.interest_score >= 4 ? 'rgba(34,197,94,0.15)' : r.interest_score >= 2 ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.06)',
-                              color: r.interest_score >= 4 ? 'var(--success)' : r.interest_score >= 2 ? 'var(--accent)' : 'var(--text-muted)',
+                              background: r.interest_score >= 5 ? 'rgba(34,197,94,0.15)' : r.interest_score >= 3 ? 'rgba(59,130,246,0.15)' : r.interest_score >= 2 ? 'rgba(234,179,8,0.15)' : 'rgba(255,255,255,0.06)',
+                              color: r.interest_score >= 5 ? 'var(--success)' : r.interest_score >= 3 ? 'var(--accent)' : r.interest_score >= 2 ? '#eab308' : 'var(--text-muted)',
                             }}>
                               {r.interest_score}/10
                             </span>
